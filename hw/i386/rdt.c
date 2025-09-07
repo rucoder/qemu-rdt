@@ -14,8 +14,8 @@
  * for more details.
  */
 
+#include "qemu/osdep.h"
 #include "hw/i386/rdt.h"
-#include "qemu/osdep.h" /* Needs to be included before isa.h */
 #include "hw/isa/isa.h"
 #include "hw/qdev-properties.h"
 #include "include/hw/boards.h"
@@ -230,7 +230,7 @@ static inline int16_t cache_ids_contain(uint32_t current_ids[],
 
 OBJECT_DEFINE_TYPE(RDTState, rdt, RDT, ISA_DEVICE);
 
-static Property rdt_properties[] = {
+static const Property rdt_properties[] = {
     DEFINE_PROP_UINT32(RDT_NUM_RMID_PROP, RDTState, rmids, 256),
 };
 
@@ -309,7 +309,7 @@ static void rdt_finalize(Object *obj)
     g_free(rdt->rdtInstances);
 }
 
-static void rdt_class_init(ObjectClass *klass, void *data)
+static void rdt_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
