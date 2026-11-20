@@ -1838,7 +1838,7 @@ static void virtio_gpu_reset_bh(void *opaque)
     }
 
     for (i = 0; i < g->parent_obj.conf.max_outputs; i++) {
-        qemu_console_set_surface(g->parent_obj.scanout[i].con, NULL);
+        virtio_gpu_disable_scanout(g, i);
     }
 
     g->reset_finished = true;
