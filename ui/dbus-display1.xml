@@ -1193,6 +1193,7 @@
         - ``width`` (u): the console width in pixels.
         - ``height`` (u): the console height in pixels.
         - ``refresh_rate`` (u): the display refresh rate in millihertz.
+        - ``connected`` (b): whether a monitor shows the console.
         - ``vendor`` (s): the monitor's manufacturer, the three upper-case
           letters of its PNP ID.
         - ``product`` (q): the monitor's product code.
@@ -1202,8 +1203,9 @@
         - ``serial_string`` (s): the monitor's serial number as text, up to
           13 printable ASCII characters.
 
-        A zero ``width`` or ``height`` means that no monitor shows the
-        console.
+        When no monitor shows the console, ``connected`` is false and the
+        device takes its output away; ``width`` and ``height`` keep the
+        size it comes back with. A connected monitor has a size.
 
         ``vendor``, ``product``, ``serial_number``, ``name`` and
         ``serial_string`` name the monitor that shows the console, as its
@@ -1229,6 +1231,12 @@
         Extra keys will be ignored.
         The invocation will fail if any key has the wrong type or a value
         out of its range, leaving the UI info unchanged.
+
+        ``connected`` true needs a width and a height, given with it or
+        before. Without ``connected``, a new ``width`` or ``height`` of
+        zero means no monitor and a non-zero size means one, as for
+        clients that do not know the key; a call with neither leaves the
+        monitor connected or not.
     -->
     <method name="Apply">
       <arg name="ui_info" type="a{sv}" direction="in"/>

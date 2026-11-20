@@ -735,6 +735,95 @@ test_dbus_display_uiinfo_identity(void)
     qtest_quit(qts);
 }
 
+static gboolean
+test_uiinfo_get_connected(QemuDBusDisplay1UIInfo *ui_info)
+{
+    g_autoptr(GError) err = NULL;
+    g_autoptr(GVariant) info = NULL;
+    gboolean connected = FALSE;
+
+    qemu_dbus_display1_uiinfo_call_get_sync(ui_info, G_DBUS_CALL_FLAGS_NONE,
+                                            -1, &info, NULL, &err);
+    g_assert_no_error(err);
+    g_assert_true(g_variant_lookup(info, "connected", "b", &connected));
+    return connected;
+}
+
+/* UIInfo.Apply with "connected", and with a size, a name or nothing more. */
+static char *
+test_uiinfo_apply_connected(QemuDBusDisplay1UIInfo *ui_info, int connected,
+                            uint32_t width, uint32_t height, const char *name)
+{
+    GVariantBuilder b;
+
+    g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+    if (connected >= 0) {
+        g_variant_builder_add(&b, "{sv}", "connected",
+                              g_variant_new_boolean(connected));
+    }
+    if (width || height) {
+        g_variant_builder_add(&b, "{sv}", "width",
+                              g_variant_new_uint32(width));
+        g_variant_builder_add(&b, "{sv}", "height",
+                              g_variant_new_uint32(height));
+    }
+    if (name) {
+        g_variant_builder_add(&b, "{sv}", "name", g_variant_new_string(name));
+    }
+    return test_uiinfo_apply(ui_info, g_variant_builder_end(&b));
+}
+
+/* Whether a monitor shows the console, said or taken from the size. */
+static void
+test_dbus_display_uiinfo_connected(void)
+{
+    g_autoptr(GError) err = NULL;
+    g_autoptr(GDBusConnection) conn = NULL;
+    QemuDBusDisplay1UIInfo *ui_info = NULL;
+    QTestState *qts = NULL;
+    char *error;
+
+    test_setup_args(&qts, &conn,
+                    "-vga none -device virtio-gpu-pci,xres=1024,yres=768"
+                    " -display dbus,p2p=yes -name dbus-test");
+    ui_info = QEMU_DBUS_DISPLAY1_UIINFO(
+        qemu_dbus_display1_uiinfo_proxy_new_sync(
+            conn, G_DBUS_PROXY_FLAGS_NONE, NULL,
+            DBUS_DISPLAY1_ROOT "/Console_0", NULL, &err));
+    g_assert_no_error(err);
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+
+    /* Disconnected, the size stays for the monitor to come back with. */
+    g_assert_null(test_uiinfo_apply_connected(ui_info, false, 0, 0, NULL));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1024);
+
+    /* Neither key nor size: still disconnected. */
+    g_assert_null(test_uiinfo_apply_connected(ui_info, -1, 0, 0, "Name"));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+
+    g_assert_null(test_uiinfo_apply_connected(ui_info, true, 0, 0, NULL));
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1024);
+
+    /* No key: a zero size is no monitor, as for older clients. */
+    g_assert_null(test_uiinfo_apply_connected(ui_info, -1, 0, 1, NULL));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    g_assert_null(test_uiinfo_apply_connected(ui_info, -1, 800, 600, NULL));
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+
+    /* A connected monitor has a size. */
+    g_assert_null(test_uiinfo_apply_connected(ui_info, -1, 0, 1, NULL));
+    error = test_uiinfo_apply_connected(ui_info, true, 0, 1, NULL);
+    g_assert_cmpstr(error, ==, "org.qemu.Display1.Error.Invalid");
+    g_free(error);
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+
+    g_clear_object(&ui_info);
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+
 /*
  * A virtio-gpu driven from the test, as a guest would: what it reports for
  * output 0, and when, after a UI changes the monitor through D-Bus.
@@ -1102,6 +1191,38 @@ test_dbus_display_gpu_identity(void)
     test_gpu_stop(&t);
 }
 
+/* "connected" turns the output off and back on, at the size it had. */
+static void
+test_dbus_display_gpu_connected(void)
+{
+    TestGPU t = {};
+    uint32_t width, height;
+    g_autofree char *error = NULL;
+
+    test_gpu_start(&t);
+    test_gpu_apply(&t, 1600, 900);
+    test_gpu_wait_edid_width(&t, 1600);
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, ==, 1600);
+    test_gpu_clear_display_event(&t);
+
+    error = test_uiinfo_apply_connected(t.ui_info, false, 0, 0, NULL);
+    g_assert_null(error);
+    test_gpu_wait_display_event(&t);
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, ==, 0);
+    test_gpu_clear_display_event(&t);
+
+    error = test_uiinfo_apply_connected(t.ui_info, true, 0, 0, NULL);
+    g_assert_null(error);
+    test_gpu_wait_display_event(&t);
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, ==, 1600);
+    g_assert_cmpuint(height, ==, 900);
+
+    test_gpu_stop(&t);
+}
+
 /*
  * Another monitor of the same size on an output the guest has seen: the
  * guest sees the first one go and the other come.
@@ -1237,6 +1358,10 @@ main(int argc, char **argv)
                        test_dbus_display_uiinfo_legacy);
         qtest_add_func("/dbus-display/uiinfo/identity",
                        test_dbus_display_uiinfo_identity);
+        qtest_add_func("/dbus-display/uiinfo/connected",
+                       test_dbus_display_uiinfo_connected);
+        qtest_add_func("/dbus-display/gpu/connected",
+                       test_dbus_display_gpu_connected);
         qtest_add_func("/dbus-display/gpu/identity",
                        test_dbus_display_gpu_identity);
         qtest_add_func("/dbus-display/gpu/identity-swap",

@@ -561,6 +561,7 @@ dbus_ui_info_get(DBusDisplayConsole *ddc,
     g_variant_dict_insert(&dict, "width", "u", ui_info.width);
     g_variant_dict_insert(&dict, "height", "u", ui_info.height);
     g_variant_dict_insert(&dict, "refresh_rate", "u", ui_info.refresh_rate);
+    g_variant_dict_insert(&dict, "connected", "b", ui_info.connected);
     g_variant_dict_insert(&dict, "vendor", "s", ui_info.identity.vendor);
     g_variant_dict_insert(&dict, "product", "q", ui_info.identity.product);
     g_variant_dict_insert(&dict, "serial_number", "u",
@@ -693,8 +694,27 @@ dbus_ui_info_apply(DBusDisplayConsole *ddc,
                                  false)) {
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
-    /* The interface has no other way to say there is no monitor. */
-    ui_info.connected = ui_info.width && ui_info.height;
+    if (g_variant_dict_contains(&dict, "connected")) {
+        gboolean connected;
+
+        if (!dbus_ui_info_apply_lookup(invocation, &dict, "connected", "b",
+                                       &connected)) {
+            return DBUS_METHOD_INVOCATION_HANDLED;
+        }
+        if (connected && (!ui_info.width || !ui_info.height)) {
+            g_dbus_method_invocation_return_error(invocation,
+                                                  DBUS_DISPLAY_ERROR,
+                                                  DBUS_DISPLAY_ERROR_INVALID,
+                                                  "a connected monitor needs "
+                                                  "a width and a height");
+            return DBUS_METHOD_INVOCATION_HANDLED;
+        }
+        ui_info.connected = connected;
+    } else if (g_variant_dict_contains(&dict, "width") ||
+               g_variant_dict_contains(&dict, "height")) {
+        /* Without "connected", a zero size means no monitor. */
+        ui_info.connected = ui_info.width && ui_info.height;
+    }
 
     qemu_console_set_ui_info(ddc->dcl.con, &ui_info, false);
     qemu_dbus_display1_uiinfo_complete_apply(ddc->iface_ui_info, invocation);
