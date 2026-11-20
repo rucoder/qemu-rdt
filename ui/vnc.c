@@ -2659,7 +2659,7 @@ static int protocol_client_msg(VncState *vs, uint8_t *data, size_t len)
 
         trace_vnc_msg_client_set_desktop_size(vs, vs->ioc, w, h, screens);
         if (qemu_console_ui_info_supported(vs->vd->dcl.con)) {
-            QemuUIInfo info = { .width = w, .height = h };
+            QemuUIInfo info = { .width = w, .height = h, .connected = w && h };
             qemu_console_set_ui_info(vs->vd->dcl.con, &info, false);
             vnc_desktop_resize_ext(vs, 4 /* Request forwarded */);
         } else {

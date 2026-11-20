@@ -525,7 +525,7 @@ static CGEventRef handleTapEvent(CGEventTapProxy proxy, CGEventType type, CGEven
 {
     /* Must be called with the BQL, i.e. via updateUIInfo */
     NSSize frameSize;
-    QemuUIInfo info;
+    QemuUIInfo info = {};
 
     if (!qemu_console_is_graphic(dcl.con)) {
         return;
@@ -563,6 +563,7 @@ static CGEventRef handleTapEvent(CGEventTapProxy proxy, CGEventType type, CGEven
     info.yoff = 0;
     info.width = frameSize.width * [[self window] backingScaleFactor];
     info.height = frameSize.height * [[self window] backingScaleFactor];
+    info.connected = info.width && info.height;
 
     qemu_console_set_ui_info(dcl.con, &info, TRUE);
 }

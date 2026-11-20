@@ -116,6 +116,11 @@ typedef struct QemuUIInfo {
     uint32_t  width;
     uint32_t  height;
     uint32_t  refresh_rate;
+    /*
+     * Whether a monitor shows the console. When true, width and height are
+     * its size and not zero; when false, the device takes its output away.
+     */
+    bool      connected;
 } QemuUIInfo;
 
 /* cursor data format is 32bit RGBA */

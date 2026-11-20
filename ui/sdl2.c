@@ -605,6 +605,7 @@ static void handle_windowevent(SDL_Event *ev)
             QemuUIInfo info = {
                 .width = ev->window.data1,
                 .height = ev->window.data2,
+                .connected = ev->window.data1 > 0 && ev->window.data2 > 0,
             };
             qemu_console_set_ui_info(scon->dcl.con, &info, true);
         }

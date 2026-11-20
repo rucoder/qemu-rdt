@@ -114,7 +114,7 @@ static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
     g->req_state[idx].width_mm = info->width_mm;
     g->req_state[idx].height_mm = info->height_mm;
 
-    if (info->width && info->height) {
+    if (info->connected) {
         g->enabled_output_bitmask |= (1 << idx);
     } else {
         g->enabled_output_bitmask &= ~(1 << idx);
@@ -254,6 +254,7 @@ virtio_gpu_base_device_realize(DeviceState *qdev,
         if (g->enabled_output_bitmask & (1 << i)) {
             info.width = g->req_state[i].width;
             info.height = g->req_state[i].height;
+            info.connected = true;
         }
         qemu_console_init_ui_info(g->scanout[i].con, &info);
     }

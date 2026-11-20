@@ -715,7 +715,8 @@ static bool qemu_ui_info_equal(const QemuUIInfo *a, const QemuUIInfo *b)
            a->yoff == b->yoff &&
            a->width == b->width &&
            a->height == b->height &&
-           a->refresh_rate == b->refresh_rate;
+           a->refresh_rate == b->refresh_rate &&
+           a->connected == b->connected;
 }
 
 int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
@@ -723,6 +724,7 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
     if (!qemu_console_ui_info_supported(con)) {
         return -1;
     }
+    assert(!info->connected || (info->width && info->height));
     if (qemu_ui_info_equal(&con->ui_info, info)) {
         /* nothing changed -- ignore */
         return 0;

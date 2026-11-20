@@ -205,6 +205,8 @@ dbus_console_set_ui_info(DBusDisplayConsole *ddc,
         .yoff = arg_yoff,
         .width = arg_width,
         .height = arg_height,
+        /* The interface has no other way to say there is no monitor. */
+        .connected = arg_width && arg_height,
     };
 
     if (!qemu_console_ui_info_supported(ddc->dcl.con)) {
@@ -616,6 +618,8 @@ dbus_ui_info_apply(DBusDisplayConsole *ddc,
                                    &ui_info.refresh_rate)) {
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
+    /* The interface has no other way to say there is no monitor. */
+    ui_info.connected = ui_info.width && ui_info.height;
 
     qemu_console_set_ui_info(ddc->dcl.con, &ui_info, false);
     qemu_dbus_display1_uiinfo_complete_apply(ddc->iface_ui_info, invocation);
