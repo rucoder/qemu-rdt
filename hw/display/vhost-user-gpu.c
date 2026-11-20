@@ -540,9 +540,7 @@ vhost_user_gpu_set_config(VirtIODevice *vdev,
         (const struct virtio_gpu_config *)config_data;
     int ret;
 
-    if (vgconfig->events_clear) {
-        b->virtio_config.events_read &= ~vgconfig->events_clear;
-    }
+    virtio_gpu_base_events_clear(b, vgconfig->events_clear);
 
     ret = vhost_dev_set_config(&g->vhost->dev, config_data,
                                0, sizeof(struct virtio_gpu_config),

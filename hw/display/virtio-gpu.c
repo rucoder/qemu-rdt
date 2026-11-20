@@ -1893,9 +1893,7 @@ virtio_gpu_set_config(VirtIODevice *vdev, const uint8_t *config)
     const struct virtio_gpu_config *vgconfig =
         (const struct virtio_gpu_config *)config;
 
-    if (vgconfig->events_clear) {
-        g->virtio_config.events_read &= ~vgconfig->events_clear;
-    }
+    virtio_gpu_base_events_clear(g, vgconfig->events_clear);
 }
 
 static bool virtio_gpu_blob_state_needed(void *opaque)

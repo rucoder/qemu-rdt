@@ -27,6 +27,7 @@ virtio_gpu_base_reset(VirtIOGPUBase *g)
     int i;
 
     g->enable = 0;
+    g->repeat_display_event = false;
 
     for (i = 0; i < g->conf.max_outputs; i++) {
         g->scanout[i].resource_id = 0;
@@ -50,6 +51,27 @@ virtio_gpu_base_fill_display_info(VirtIOGPUBase *g,
             dpy_info->pmodes[i].r.width = cpu_to_le32(g->req_state[i].width);
             dpy_info->pmodes[i].r.height = cpu_to_le32(g->req_state[i].height);
         }
+    }
+    g->repeat_display_event = false;
+}
+
+/*
+ * A guest handles a display event by reading the display info and clearing
+ * the event, in either order. A change that comes between the two raises
+ * the event again, and a guest that clears after reading clears that one
+ * too: it never reads the display info the event is about. So the first
+ * clear of a display event that the guest has not read the display info
+ * for raises it again. A guest that clears before reading may get each
+ * display event twice, and reads the display info once more; one that
+ * clears it again without reading has no use for it.
+ */
+void virtio_gpu_base_events_clear(VirtIOGPUBase *g, uint32_t events_clear)
+{
+    g->virtio_config.events_read &= ~events_clear;
+    if ((events_clear & VIRTIO_GPU_EVENT_DISPLAY) && g->repeat_display_event) {
+        g->repeat_display_event = false;
+        g->virtio_config.events_read |= VIRTIO_GPU_EVENT_DISPLAY;
+        virtio_notify_config(&g->parent_obj);
     }
 }
 
@@ -95,6 +117,9 @@ static void virtio_gpu_text_update(void *opaque, uint32_t *chardata)
 static void virtio_gpu_notify_event(VirtIOGPUBase *g, uint32_t event_type)
 {
     g->virtio_config.events_read |= event_type;
+    if (event_type & VIRTIO_GPU_EVENT_DISPLAY) {
+        g->repeat_display_event = true;
+    }
     virtio_notify_config(&g->parent_obj);
 }
 
