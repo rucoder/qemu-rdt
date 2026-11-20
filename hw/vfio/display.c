@@ -167,6 +167,10 @@ static bool vfio_display_edid_init(VFIOPCIDevice *vdev, Error **errp)
                                         vfio_display_edid_link_up, vdev);
 
     vfio_display_edid_update(vdev, true, 0, 0);
+    qemu_console_init_ui_info(dpy->con, &(QemuUIInfo) {
+        .width = vdev->display_xres,
+        .height = vdev->display_yres,
+    });
     return true;
 
 err:

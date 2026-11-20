@@ -728,6 +728,16 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
     return 0;
 }
 
+/*
+ * For the device, when it creates the console: the state its output starts
+ * in. qemu_console_set_ui_info() compares requests with it, and UIs that
+ * change one field start from it. The device is not notified.
+ */
+void qemu_console_init_ui_info(QemuConsole *con, const QemuUIInfo *info)
+{
+    con->ui_info = *info;
+}
+
 void qemu_console_update(QemuConsole *con, int x, int y, int w, int h)
 {
     DisplayState *s = con->ds;

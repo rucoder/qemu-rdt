@@ -500,6 +500,48 @@ test_dbus_display_keyboard(void)
     qtest_quit(qts);
 }
 
+/*
+ * A device's output is not off until a UI says so: UIInfo starts from the
+ * size the virtio-gpu output is created with, not from a zero size.
+ */
+static void
+test_dbus_display_uiinfo_initial(void)
+{
+    g_autoptr(GError) err = NULL;
+    g_autoptr(GDBusConnection) conn = NULL;
+    g_autoptr(QemuDBusDisplay1UIInfoProxy) ui_info = NULL;
+    g_autoptr(GVariant) info = NULL;
+    QTestState *qts = NULL;
+    guint32 width = 0, height = 0;
+
+    test_setup_args(&qts, &conn,
+                    "-vga none -device virtio-gpu-pci,xres=1024,yres=768"
+                    " -display dbus,p2p=yes -name dbus-test");
+
+    ui_info = QEMU_DBUS_DISPLAY1_UIINFO_PROXY(
+        qemu_dbus_display1_uiinfo_proxy_new_sync(
+            conn,
+            G_DBUS_PROXY_FLAGS_NONE,
+            NULL,
+            DBUS_DISPLAY1_ROOT "/Console_0",
+            NULL,
+            &err));
+    g_assert_no_error(err);
+
+    qemu_dbus_display1_uiinfo_call_get_sync(
+        QEMU_DBUS_DISPLAY1_UIINFO(ui_info),
+        G_DBUS_CALL_FLAGS_NONE, -1, &info, NULL, &err);
+    g_assert_no_error(err);
+
+    g_assert_true(g_variant_lookup(info, "width", "u", &width));
+    g_assert_true(g_variant_lookup(info, "height", "u", &height));
+    g_assert_cmpuint(width, ==, 1024);
+    g_assert_cmpuint(height, ==, 768);
+
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+
 static gsize
 get_console_ids_count(GDBusConnection *conn)
 {
@@ -597,6 +639,10 @@ main(int argc, char **argv)
     qtest_add_func("/dbus-display/console/text-resize",
                    test_dbus_display_text_resize);
     qtest_add_func("/dbus-display/keyboard", test_dbus_display_keyboard);
+    if (qtest_has_device("virtio-gpu-pci")) {
+        qtest_add_func("/dbus-display/uiinfo/initial",
+                       test_dbus_display_uiinfo_initial);
+    }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
     }

@@ -247,8 +247,15 @@ virtio_gpu_base_device_realize(DeviceState *qdev,
 
     g->hw_ops = &virtio_gpu_ops;
     for (i = 0; i < g->conf.max_outputs; i++) {
+        QemuUIInfo info = {};
+
         g->scanout[i].con =
             qemu_graphic_console_create(DEVICE(g), i, &virtio_gpu_ops, g);
+        if (g->enabled_output_bitmask & (1 << i)) {
+            info.width = g->req_state[i].width;
+            info.height = g->req_state[i].height;
+        }
+        qemu_console_init_ui_info(g->scanout[i].con, &info);
     }
 
     return true;
