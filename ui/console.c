@@ -707,12 +707,23 @@ const QemuUIInfo *qemu_console_get_ui_info(const QemuConsole *con)
     return &con->ui_info;
 }
 
+static bool qemu_ui_info_equal(const QemuUIInfo *a, const QemuUIInfo *b)
+{
+    return a->width_mm == b->width_mm &&
+           a->height_mm == b->height_mm &&
+           a->xoff == b->xoff &&
+           a->yoff == b->yoff &&
+           a->width == b->width &&
+           a->height == b->height &&
+           a->refresh_rate == b->refresh_rate;
+}
+
 int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
 {
     if (!qemu_console_ui_info_supported(con)) {
         return -1;
     }
-    if (memcmp(&con->ui_info, info, sizeof(con->ui_info)) == 0) {
+    if (qemu_ui_info_equal(&con->ui_info, info)) {
         /* nothing changed -- ignore */
         return 0;
     }
