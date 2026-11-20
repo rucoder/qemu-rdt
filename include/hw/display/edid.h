@@ -3,6 +3,10 @@
 
 #define EDID_NAME_MAX_LENGTH 12
 
+/* The preferred mode of an EDID whose qemu_edid_info gives none */
+#define EDID_DEFAULT_PREFX 1280
+#define EDID_DEFAULT_PREFY 800
+
 typedef struct qemu_edid_info {
     const char *vendor; /* http://www.uefi.org/pnp_id_list */
     const char *name;

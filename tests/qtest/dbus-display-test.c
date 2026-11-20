@@ -500,6 +500,77 @@ test_dbus_display_keyboard(void)
     qtest_quit(qts);
 }
 
+/* A machine with @device, a display device, on the D-Bus display. */
+static void
+test_setup_device(QTestState **qts, GDBusConnection **conn, const char *device)
+{
+    g_autofree char *args = g_strdup_printf(
+        "-vga none -device %s -display dbus,p2p=yes -name dbus-test", device);
+
+    test_setup_args(qts, conn, args);
+}
+
+/* The UIInfo of console @index. */
+static QemuDBusDisplay1UIInfo *
+test_uiinfo_proxy(GDBusConnection *conn, int index)
+{
+    g_autoptr(GError) err = NULL;
+    g_autofree char *path = g_strdup_printf(DBUS_DISPLAY1_ROOT "/Console_%d",
+                                            index);
+    QemuDBusDisplay1UIInfo *ui_info;
+
+    ui_info = QEMU_DBUS_DISPLAY1_UIINFO(
+        qemu_dbus_display1_uiinfo_proxy_new_sync(
+            conn, G_DBUS_PROXY_FLAGS_NONE, NULL, path, NULL, &err));
+    g_assert_no_error(err);
+    return ui_info;
+}
+
+static GVariant *
+test_uiinfo_get(QemuDBusDisplay1UIInfo *ui_info)
+{
+    g_autoptr(GError) err = NULL;
+    GVariant *info = NULL;
+
+    qemu_dbus_display1_uiinfo_call_get_sync(ui_info, G_DBUS_CALL_FLAGS_NONE,
+                                            -1, &info, NULL, &err);
+    g_assert_no_error(err);
+    return info;
+}
+
+static guint32
+test_uiinfo_get_u(QemuDBusDisplay1UIInfo *ui_info, const char *key)
+{
+    g_autoptr(GVariant) info = test_uiinfo_get(ui_info);
+    guint32 value = 0;
+
+    g_assert_true(g_variant_lookup(info, key, "u", &value));
+    return value;
+}
+
+/*
+ * A device's output is not off until a UI says so: UIInfo starts from the
+ * size the virtio-gpu output is created with, not from a zero size.
+ */
+static void
+test_dbus_display_uiinfo_initial(void)
+{
+    g_autoptr(GDBusConnection) conn = NULL;
+    QemuDBusDisplay1UIInfo *ui_info;
+    QTestState *qts = NULL;
+
+    test_setup_device(&qts, &conn, "virtio-gpu-pci,xres=1024,yres=768");
+    ui_info = test_uiinfo_proxy(conn, 0);
+
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1024);
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "height"), ==, 768);
+
+    g_clear_object(&ui_info);
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+
+
 static gsize
 get_console_ids_count(GDBusConnection *conn)
 {
@@ -597,6 +668,10 @@ main(int argc, char **argv)
     qtest_add_func("/dbus-display/console/text-resize",
                    test_dbus_display_text_resize);
     qtest_add_func("/dbus-display/keyboard", test_dbus_display_keyboard);
+    if (qtest_has_device("virtio-gpu-pci")) {
+        qtest_add_func("/dbus-display/uiinfo/initial",
+                       test_dbus_display_uiinfo_initial);
+    }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
     }

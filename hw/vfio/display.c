@@ -54,7 +54,7 @@ err:
     trace_vfio_display_edid_write_error();
 }
 
-static void vfio_display_edid_update(VFIOPCIDevice *vdev, bool enabled,
+static bool vfio_display_edid_update(VFIOPCIDevice *vdev, bool enabled,
                                      int prefx, int prefy)
 {
     VFIODisplay *dpy = vdev->dpy;
@@ -74,7 +74,7 @@ static void vfio_display_edid_update(VFIOPCIDevice *vdev, bool enabled,
     trace_vfio_display_edid_link_down();
 
     if (!enabled) {
-        return;
+        return true;
     }
 
     if (edid.maxx && edid.prefx > edid.maxx) {
@@ -100,10 +100,11 @@ static void vfio_display_edid_update(VFIOPCIDevice *vdev, bool enabled,
 
     timer_mod(dpy->edid_link_timer,
               qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 100);
-    return;
+    return true;
 
 err:
     trace_vfio_display_edid_write_error();
+    return false;
 }
 
 static void vfio_display_edid_ui_info(void *opaque, uint32_t idx,
@@ -155,18 +156,34 @@ static bool vfio_display_edid_init(VFIOPCIDevice *vdev, Error **errp)
 
     dpy->edid_blob = g_malloc0(dpy->edid_regs->edid_max_size);
 
-    /* if xres + yres properties are unset use the maximum resolution */
+    /*
+     * Unset xres + yres properties default to the maximum resolution or,
+     * without one, to the EDID's default, and the EDID keeps to the
+     * maximum: the monitor starts at that size.
+     */
     if (!vdev->display_xres) {
-        vdev->display_xres = dpy->edid_regs->max_xres;
+        vdev->display_xres = dpy->edid_regs->max_xres ?: EDID_DEFAULT_PREFX;
     }
     if (!vdev->display_yres) {
-        vdev->display_yres = dpy->edid_regs->max_yres;
+        vdev->display_yres = dpy->edid_regs->max_yres ?: EDID_DEFAULT_PREFY;
+    }
+    if (dpy->edid_regs->max_xres) {
+        vdev->display_xres = MIN(vdev->display_xres, dpy->edid_regs->max_xres);
+    }
+    if (dpy->edid_regs->max_yres) {
+        vdev->display_yres = MIN(vdev->display_yres, dpy->edid_regs->max_yres);
     }
 
     dpy->edid_link_timer = timer_new_ms(QEMU_CLOCK_REALTIME,
                                         vfio_display_edid_link_up, vdev);
 
-    vfio_display_edid_update(vdev, true, 0, 0);
+    /* Unwritten, the EDID is up to the UI's first request to write. */
+    if (vfio_display_edid_update(vdev, true, 0, 0)) {
+        qemu_console_init_ui_info(dpy->con, &(QemuUIInfo) {
+            .width = vdev->display_xres,
+            .height = vdev->display_yres,
+        });
+    }
     return true;
 
 err:

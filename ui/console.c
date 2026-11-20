@@ -728,6 +728,16 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
     return 0;
 }
 
+/*
+ * For the device, when it creates the console: the state its output starts
+ * in. qemu_console_set_ui_info() compares requests with it, and UIs that
+ * change one field start from it. The device is not notified.
+ */
+void qemu_console_init_ui_info(QemuConsole *con, const QemuUIInfo *info)
+{
+    con->ui_info = *info;
+}
+
 void qemu_console_update(QemuConsole *con, int x, int y, int w, int h)
 {
     DisplayState *s = con->ds;
@@ -1145,6 +1155,8 @@ QemuConsole *qemu_graphic_console_create(DeviceState *dev, uint32_t head,
     s = qemu_graphic_console_lookup_unused();
     if (s) {
         trace_console_gfx_reuse(s->index);
+        /* What UIs asked of the last device is not for this one. */
+        memset(&s->ui_info, 0, sizeof(s->ui_info));
         width = qemu_console_get_width(s, 0);
         height = qemu_console_get_height(s, 0);
         if (s->ds->initialized) {

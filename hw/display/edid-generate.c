@@ -400,10 +400,10 @@ void qemu_edid_generate(uint8_t *edid, size_t size,
         info->name = "QEMU Monitor";
     }
     if (!info->prefx) {
-        info->prefx = 1280;
+        info->prefx = EDID_DEFAULT_PREFX;
     }
     if (!info->prefy) {
-        info->prefy = 800;
+        info->prefy = EDID_DEFAULT_PREFY;
     }
     if (info->width_mm && info->height_mm) {
         width_mm = info->width_mm;
