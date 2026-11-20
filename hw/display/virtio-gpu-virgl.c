@@ -609,6 +609,13 @@ static void virgl_cmd_set_scanout(VirtIOGPU *g,
         cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID;
         return;
     }
+    if (!info.tex_id && !d3d_tex2d) {
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "%s: resource %d has no texture to scan out\n",
+                      __func__, ss.resource_id);
+        cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID;
+        return;
+    }
     if (!virtio_gpu_check_scanout_bounds(ss.scanout_id, ss.resource_id,
                                          info.width, info.height, &ss.r,
                                          &cmd->error)) {
