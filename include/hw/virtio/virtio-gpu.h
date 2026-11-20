@@ -172,6 +172,10 @@ struct VirtIOGPUBase {
     struct virtio_gpu_scanout scanout[VIRTIO_GPU_MAX_SCANOUTS];
 
     int enabled_output_bitmask;
+    /* A display event was raised since the guest last read the display info */
+    bool display_info_stale;
+    /* ... and was raised again after the guest cleared it */
+    bool display_event_repeated;
     struct virtio_gpu_requested_state req_state[VIRTIO_GPU_MAX_SCANOUTS];
 };
 
@@ -331,6 +335,7 @@ void virtio_gpu_base_device_unrealize(DeviceState *qdev);
 void virtio_gpu_base_reset(VirtIOGPUBase *g);
 void virtio_gpu_base_fill_display_info(VirtIOGPUBase *g,
                         struct virtio_gpu_resp_display_info *dpy_info);
+void virtio_gpu_base_events_clear(VirtIOGPUBase *g, uint32_t events_clear);
 
 void virtio_gpu_base_generate_edid(VirtIOGPUBase *g, int scanout,
                                    struct virtio_gpu_resp_edid *edid);

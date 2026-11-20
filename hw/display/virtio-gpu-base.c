@@ -21,12 +21,24 @@
 #include "trace.h"
 #include "qapi/qapi-types-virtio.h"
 
+static void virtio_gpu_notify_event(VirtIOGPUBase *g, uint32_t event_type)
+{
+    g->virtio_config.events_read |= event_type;
+    if (event_type & VIRTIO_GPU_EVENT_DISPLAY) {
+        g->display_info_stale = true;
+        g->display_event_repeated = false;
+    }
+    virtio_notify_config(&g->parent_obj);
+}
+
 void
 virtio_gpu_base_reset(VirtIOGPUBase *g)
 {
     int i;
 
     g->enable = 0;
+    g->display_info_stale = false;
+    g->display_event_repeated = false;
 
     for (i = 0; i < g->conf.max_outputs; i++) {
         g->scanout[i].resource_id = 0;
@@ -50,6 +62,27 @@ virtio_gpu_base_fill_display_info(VirtIOGPUBase *g,
             dpy_info->pmodes[i].r.width = cpu_to_le32(g->req_state[i].width);
             dpy_info->pmodes[i].r.height = cpu_to_le32(g->req_state[i].height);
         }
+    }
+    g->display_info_stale = false;
+}
+
+/*
+ * A guest handles a display event by reading the display info and clearing
+ * the event, in either order. A change that comes between the two raises
+ * the event again, and a guest that clears after reading would clear that
+ * one too, never to read the display info it is about. So a display event
+ * cleared while the display info has changed since the guest last read it
+ * is raised again, once: a guest that clears it again without reading has
+ * no use for it.
+ */
+void virtio_gpu_base_events_clear(VirtIOGPUBase *g, uint32_t events_clear)
+{
+    g->virtio_config.events_read &= ~events_clear;
+    if ((events_clear & VIRTIO_GPU_EVENT_DISPLAY) && g->display_info_stale &&
+        !g->display_event_repeated) {
+        g->display_event_repeated = true;
+        g->virtio_config.events_read |= VIRTIO_GPU_EVENT_DISPLAY;
+        virtio_notify_config(&g->parent_obj);
     }
 }
 
@@ -90,12 +123,6 @@ static bool virtio_gpu_update_display(void *opaque)
 
 static void virtio_gpu_text_update(void *opaque, uint32_t *chardata)
 {
-}
-
-static void virtio_gpu_notify_event(VirtIOGPUBase *g, uint32_t event_type)
-{
-    g->virtio_config.events_read |= event_type;
-    virtio_notify_config(&g->parent_obj);
 }
 
 static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
