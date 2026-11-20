@@ -44,6 +44,7 @@ int main(int argc, char *argv[])
     uint8_t blob[512];
     size_t size;
     uint32_t dpi = 100;
+    unsigned int serial_number;
     int rc;
 
     for (;;) {
@@ -105,6 +106,10 @@ int main(int argc, char *argv[])
             break;
         case 's':
             info.serial = optarg;
+            /* A serial number that is a number goes in the ID too. */
+            if (qemu_strtoui(optarg, NULL, 10, &serial_number) == 0) {
+                info.serial_number = serial_number;
+            }
             break;
         case 'h':
             usage(stdout);
