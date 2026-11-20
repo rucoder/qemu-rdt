@@ -212,12 +212,12 @@ static void edid_desc_text(uint8_t *desc, uint8_t type,
     edid_desc_type(desc, type);
     memset(desc + 5, ' ', 13);
 
-    len = strlen(text);
-    if (len > 12) {
-        len = 12;
-    }
+    /* 13 characters fit; a shorter text ends with a line feed. */
+    len = MIN(strlen(text), 13);
     memcpy(desc + 5, text, len);
-    desc[5 + len] = '\n';
+    if (len < 13) {
+        desc[5 + len] = '\n';
+    }
 }
 
 static void edid_desc_ranges(uint8_t *desc)

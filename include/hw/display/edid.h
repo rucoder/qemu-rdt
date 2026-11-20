@@ -1,7 +1,7 @@
 #ifndef EDID_H
 #define EDID_H
 
-#define EDID_NAME_MAX_LENGTH 12
+#define EDID_NAME_MAX_LENGTH 13
 
 typedef struct qemu_edid_info {
     const char *vendor; /* http://www.uefi.org/pnp_id_list */
