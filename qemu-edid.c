@@ -29,7 +29,8 @@ static void usage(FILE *out)
             "    -o <file>      set output file (stdout by default)\n"
             "    -v <vendor>    set monitor vendor (three letters)\n"
             "    -n <name>      set monitor name\n"
-            "    -s <serial>    set monitor serial\n"
+            "    -s <serial>    set monitor serial, and the ID's if a decimal\n"
+            "                   number of 32 bits\n"
             "    -d <dpi>       set display resolution\n"
             "    -x <prefx>     set preferred width\n"
             "    -y <prefy>     set preferred height\n"
@@ -44,6 +45,7 @@ int main(int argc, char *argv[])
     uint8_t blob[512];
     size_t size;
     uint32_t dpi = 100;
+    unsigned int serial_number;
     int rc;
 
     for (;;) {
@@ -104,7 +106,12 @@ int main(int argc, char *argv[])
             info.name = optarg;
             break;
         case 's':
-            info.serial = optarg;
+            info.serial_string = optarg;
+            /* A serial number that is a decimal number goes in the ID too. */
+            if (g_ascii_isdigit(optarg[0]) &&
+                qemu_strtoui(optarg, NULL, 10, &serial_number) == 0) {
+                info.serial_number = serial_number;
+            }
             break;
         case 'h':
             usage(stdout);

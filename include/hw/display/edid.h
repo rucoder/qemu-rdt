@@ -10,7 +10,9 @@
 typedef struct qemu_edid_info {
     const char *vendor; /* http://www.uefi.org/pnp_id_list */
     const char *name;
-    const char *serial;
+    const char *serial_string;  /* the serial number as text */
+    uint16_t    product;        /* the product code; 0 for QEMU's own */
+    uint32_t    serial_number;  /* the 32-bit serial number; 0 for none */
     uint16_t    width_mm;
     uint16_t    height_mm;
     uint32_t    prefx;

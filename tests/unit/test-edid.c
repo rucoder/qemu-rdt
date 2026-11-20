@@ -5,6 +5,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/bswap.h"
 #include "hw/display/edid.h"
 
 #define EDID_SIZE 256
@@ -132,11 +133,11 @@ static void test_edid_placement(void)
     uint8_t edid[384], f7[18];
     const uint8_t *ext_f7;
     qemu_edid_info fhd_serial = {
-        .name = "Monitor", .serial = "SN1", .prefx = 1920, .prefy = 1080,
+        .name = "Monitor", .serial_string = "SN1", .prefx = 1920, .prefy = 1080,
     };
     qemu_edid_info fhd = { .name = "Monitor", .prefx = 1920, .prefy = 1080 };
     qemu_edid_info uhd_serial = {
-        .name = "Monitor", .serial = "SN1", .prefx = 3840, .prefy = 2160,
+        .name = "Monitor", .serial_string = "SN1", .prefx = 3840, .prefy = 2160,
     };
 
     /* No serial number: everything fits, the timings III last. */
@@ -168,6 +169,27 @@ static void test_edid_placement(void)
     check_base_tags(edid, (const uint8_t[]){ 0xfd, 0xfc, 0xff, 0xf7 });
 }
 
+/* Manufacturer, product code and serial number, as given or QEMU's own. */
+static void test_edid_id(void)
+{
+    uint8_t edid[EDID_SIZE];
+    qemu_edid_info given = {
+        .vendor = "LNX", .product = 0x7773, .serial_number = 0xcafebabe,
+    };
+    qemu_edid_info own = { .serial_string = "12345" };
+
+    generate(edid, sizeof(edid), &given);
+    g_assert_cmphex(lduw_be_p(edid + 8), ==, 0x31d8);          /* LNX */
+    g_assert_cmphex(lduw_le_p(edid + 10), ==, 0x7773);
+    g_assert_cmphex((uint32_t)ldl_le_p(edid + 12), ==, 0xcafebabe);
+
+    /* The serial number text is not the 32-bit serial number. */
+    generate(edid, sizeof(edid), &own);
+    g_assert_cmphex(lduw_be_p(edid + 8), ==, 0x4914);          /* RHT */
+    g_assert_cmphex(lduw_le_p(edid + 10), ==, 0x1234);
+    g_assert_cmphex(ldl_le_p(edid + 12), ==, 0);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -175,6 +197,7 @@ int main(int argc, char **argv)
     g_test_add_func("/edid/text", test_edid_text);
     g_test_add_func("/edid/max", test_edid_max);
     g_test_add_func("/edid/placement", test_edid_placement);
+    g_test_add_func("/edid/id", test_edid_id);
 
     return g_test_run();
 }

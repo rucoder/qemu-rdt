@@ -449,11 +449,10 @@ void qemu_edid_generate(uint8_t *edid, size_t size,
     uint16_t vendor_id = ((((info->vendor[0] - '@') & 0x1f) << 10) |
                           (((info->vendor[1] - '@') & 0x1f) <<  5) |
                           (((info->vendor[2] - '@') & 0x1f) <<  0));
-    uint16_t model_nr = 0x1234;
-    uint32_t serial_nr = info->serial ? atoi(info->serial) : 0;
+    uint16_t model_nr = info->product ? info->product : 0x1234;
     stw_be_p(edid +  8, vendor_id);
     stw_le_p(edid + 10, model_nr);
-    stl_le_p(edid + 12, serial_nr);
+    stl_le_p(edid + 12, info->serial_number);
 
     /* manufacture week and year */
     edid[16] = 42;
@@ -519,8 +518,8 @@ void qemu_edid_generate(uint8_t *edid, size_t size,
         desc = edid_desc_next(edid, dta, desc);
     }
 
-    if (desc && info->serial) {
-        edid_desc_text(desc, 0xff, info->serial);
+    if (desc && info->serial_string) {
+        edid_desc_text(desc, 0xff, info->serial_string);
         desc = edid_desc_next(edid, dta, desc);
     }
 
