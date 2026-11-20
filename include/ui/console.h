@@ -105,6 +105,7 @@ typedef struct ScanoutTexture {
     void *d3d_tex2d;
 } ScanoutTexture;
 
+/* Compared field by field in ui/console.c: add new fields there too. */
 typedef struct QemuUIInfo {
     /* physical dimension */
     uint16_t width_mm;
