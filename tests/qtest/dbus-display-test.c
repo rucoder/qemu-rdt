@@ -7,8 +7,14 @@
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 #include "libqtest.h"
+#include "libqos/malloc-pc.h"
+#include "libqos/pci-pc.h"
+#include "libqos/virtio-pci.h"
+#include "qemu/bswap.h"
 #include "qobject/qdict.h"
 #include "qobject/qstring.h"
+#include "standard-headers/linux/virtio_config.h"
+#include "standard-headers/linux/virtio_gpu.h"
 #include "ui/dbus-display1.h"
 
 static GDBusConnection*
@@ -542,6 +548,281 @@ test_dbus_display_uiinfo_initial(void)
     qtest_quit(qts);
 }
 
+/*
+ * A virtio-gpu driven from the test, as a guest would: what it reports for
+ * output 0, and when, after a UI changes the monitor through D-Bus.
+ */
+
+#define GPU_TIMEOUT_US (5 * 1000 * 1000)
+
+typedef struct TestGPU {
+    QTestState *qts;
+    GDBusConnection *conn;
+    QemuDBusDisplay1UIInfo *ui_info;
+    QGuestAllocator alloc;
+    QPCIBus *pcibus;
+    QVirtioPCIDevice *dev;
+    QVirtQueue *ctrlq;
+} TestGPU;
+
+static void
+test_gpu_start(TestGPU *t)
+{
+    g_autoptr(GError) err = NULL;
+    QPCIAddress addr = { .devfn = QPCI_DEVFN(4, 0) };
+    uint64_t features;
+
+    test_setup_args(&t->qts, &t->conn,
+                    "-vga none -device virtio-gpu-pci,addr=04.0"
+                    " -display dbus,p2p=yes -name dbus-test");
+
+    t->ui_info = QEMU_DBUS_DISPLAY1_UIINFO(
+        qemu_dbus_display1_uiinfo_proxy_new_sync(
+            t->conn, G_DBUS_PROXY_FLAGS_NONE, NULL,
+            DBUS_DISPLAY1_ROOT "/Console_0", NULL, &err));
+    g_assert_no_error(err);
+
+    pc_alloc_init(&t->alloc, t->qts, 0);
+    t->pcibus = qpci_new_pc(t->qts, &t->alloc);
+    t->dev = virtio_pci_new(t->pcibus, &addr);
+    g_assert_nonnull(t->dev);
+    qvirtio_pci_device_enable(t->dev);
+    qvirtio_start_device(&t->dev->vdev);
+    features = qvirtio_get_features(&t->dev->vdev) &
+               ((1ull << VIRTIO_F_VERSION_1) | (1ull << VIRTIO_GPU_F_EDID));
+    g_assert_cmphex(features & (1ull << VIRTIO_GPU_F_EDID), !=, 0);
+    qvirtio_set_features(&t->dev->vdev, features);
+    t->ctrlq = qvirtqueue_setup(&t->dev->vdev, &t->alloc, 0);
+    qvirtio_set_driver_ok(&t->dev->vdev);
+}
+
+static void
+test_gpu_stop(TestGPU *t)
+{
+    qvirtqueue_cleanup(t->dev->vdev.bus, t->ctrlq, &t->alloc);
+    qos_object_destroy((QOSGraphObject *)t->dev);
+    qpci_free_pc(t->pcibus);
+    alloc_destroy(&t->alloc);
+    g_clear_object(&t->ui_info);
+    g_clear_object(&t->conn);
+    qtest_quit(t->qts);
+}
+
+static void
+test_gpu_cmd(TestGPU *t, const void *req, size_t req_len,
+             void *resp, size_t resp_len)
+{
+    uint64_t req_addr = guest_alloc(&t->alloc, req_len);
+    uint64_t resp_addr = guest_alloc(&t->alloc, resp_len);
+    uint32_t head;
+
+    qtest_memwrite(t->qts, req_addr, req, req_len);
+    head = qvirtqueue_add(t->qts, t->ctrlq, req_addr, req_len, false, true);
+    qvirtqueue_add(t->qts, t->ctrlq, resp_addr, resp_len, true, false);
+    qvirtqueue_kick(t->qts, &t->dev->vdev, t->ctrlq, head);
+    qvirtio_wait_used_elem(t->qts, &t->dev->vdev, t->ctrlq, head, NULL,
+                           GPU_TIMEOUT_US);
+    qtest_memread(t->qts, resp_addr, resp, resp_len);
+    guest_free(&t->alloc, req_addr);
+    guest_free(&t->alloc, resp_addr);
+    /* The command is done, and none is in flight: reuse its descriptors. */
+    qvirtqueue_reset_pool(t->ctrlq);
+}
+
+/* GET_DISPLAY_INFO: output 0's size, or 0x0 when it is not enabled. */
+static void
+test_gpu_display_info(TestGPU *t, uint32_t *width, uint32_t *height)
+{
+    struct virtio_gpu_ctrl_hdr req = {
+        .type = cpu_to_le32(VIRTIO_GPU_CMD_GET_DISPLAY_INFO),
+    };
+    struct virtio_gpu_resp_display_info resp = {};
+
+    test_gpu_cmd(t, &req, sizeof(req), &resp, sizeof(resp));
+    g_assert_cmphex(le32_to_cpu(resp.hdr.type), ==,
+                    VIRTIO_GPU_RESP_OK_DISPLAY_INFO);
+    if (le32_to_cpu(resp.pmodes[0].enabled)) {
+        *width = le32_to_cpu(resp.pmodes[0].r.width);
+        *height = le32_to_cpu(resp.pmodes[0].r.height);
+    } else {
+        *width = *height = 0;
+    }
+}
+
+/*
+ * The width of output 0's preferred mode, from its EDID. Unlike the display
+ * info, the EDID follows every UI change, whether the output is enabled or
+ * held back, and reading it is not what tells the device the guest has seen
+ * the display info.
+ */
+static uint32_t
+test_gpu_edid_width(TestGPU *t)
+{
+    struct virtio_gpu_cmd_get_edid req = {
+        .hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_GET_EDID),
+        .scanout = cpu_to_le32(0),
+    };
+    struct virtio_gpu_resp_edid resp = {};
+
+    test_gpu_cmd(t, &req, sizeof(req), &resp, sizeof(resp));
+    g_assert_cmphex(le32_to_cpu(resp.hdr.type), ==, VIRTIO_GPU_RESP_OK_EDID);
+    /* The first detailed timing: horizontal active pixels. */
+    return resp.edid[56] | ((resp.edid[58] & 0xf0) << 4);
+}
+
+static bool
+test_gpu_display_event(TestGPU *t)
+{
+    return qvirtio_config_readl(&t->dev->vdev,
+               offsetof(struct virtio_gpu_config, events_read)) &
+           VIRTIO_GPU_EVENT_DISPLAY;
+}
+
+static void
+test_gpu_clear_display_event(TestGPU *t)
+{
+    qpci_io_writel(t->dev->pdev, t->dev->bar, t->dev->device_cfg_offset +
+                   offsetof(struct virtio_gpu_config, events_clear),
+                   VIRTIO_GPU_EVENT_DISPLAY);
+}
+
+static void
+test_gpu_apply(TestGPU *t, uint32_t width, uint32_t height)
+{
+    g_autoptr(GError) err = NULL;
+    GVariantBuilder b;
+
+    g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&b, "{sv}", "width", g_variant_new_uint32(width));
+    g_variant_builder_add(&b, "{sv}", "height", g_variant_new_uint32(height));
+    qemu_dbus_display1_uiinfo_call_apply_sync(
+        t->ui_info, g_variant_builder_end(&b),
+        G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+    g_assert_no_error(err);
+}
+
+/* The console passes UI info on from a timer: wait for the device to act. */
+static void
+test_gpu_wait_display_event(TestGPU *t)
+{
+    gint64 end = g_get_monotonic_time() + GPU_TIMEOUT_US;
+
+    while (!test_gpu_display_event(t)) {
+        g_assert_cmpint(g_get_monotonic_time(), <, end);
+        g_usleep(1000);
+    }
+}
+
+static void
+test_gpu_wait_edid_width(TestGPU *t, uint32_t width)
+{
+    gint64 end = g_get_monotonic_time() + GPU_TIMEOUT_US;
+
+    while (test_gpu_edid_width(t) != width) {
+        g_assert_cmpint(g_get_monotonic_time(), <, end);
+        g_usleep(1000);
+    }
+}
+
+/* A UI's first request, for no monitor, reaches the device. */
+static void
+test_dbus_display_gpu_first_off(void)
+{
+    TestGPU t = {};
+    uint32_t width, height;
+
+    test_gpu_start(&t);
+    test_gpu_clear_display_event(&t);
+
+    test_gpu_apply(&t, 0, 0);
+    test_gpu_wait_display_event(&t);
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, ==, 0);
+
+    test_gpu_stop(&t);
+}
+
+/*
+ * A change between the guest's read of the display info and its clear of
+ * the event is not cleared with it, and an event cleared twice without a
+ * read in between is not raised again.
+ */
+static void
+test_dbus_display_gpu_event_clear(void)
+{
+    TestGPU t = {};
+    uint32_t width, height;
+
+    test_gpu_start(&t);
+    test_gpu_display_info(&t, &width, &height);
+    test_gpu_clear_display_event(&t);
+
+    test_gpu_apply(&t, 1600, 900);
+    test_gpu_wait_display_event(&t);
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, ==, 1600);
+
+    /* A change after the read, before the clear. */
+    test_gpu_apply(&t, 1280, 720);
+    test_gpu_wait_edid_width(&t, 1280);
+    test_gpu_clear_display_event(&t);
+    g_assert_true(test_gpu_display_event(&t));
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, ==, 1280);
+    test_gpu_clear_display_event(&t);
+    g_assert_false(test_gpu_display_event(&t));
+
+    /* Cleared twice without a read: raised again once, not twice. */
+    test_gpu_apply(&t, 1024, 768);
+    test_gpu_wait_display_event(&t);
+    test_gpu_clear_display_event(&t);
+    g_assert_true(test_gpu_display_event(&t));
+    test_gpu_clear_display_event(&t);
+    g_assert_false(test_gpu_display_event(&t));
+
+    test_gpu_stop(&t);
+}
+
+/*
+ * A monitor swapped before the guest looked: the guest sees the output go,
+ * then come back, whether it reads the display info before clearing the
+ * event (viogpudo) or after (Linux). The console may pass both requests in
+ * one timer period or in two; the device sees the same either way.
+ */
+static void
+test_dbus_display_gpu_swap(const void *data)
+{
+    bool clear_first = GPOINTER_TO_INT(data);
+    TestGPU t = {};
+    uint32_t width, height;
+
+    test_gpu_start(&t);
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, !=, 0);
+    test_gpu_clear_display_event(&t);
+
+    test_gpu_apply(&t, 0, 0);
+    test_gpu_apply(&t, 1600, 900);
+    test_gpu_wait_edid_width(&t, 1600);
+    g_assert_true(test_gpu_display_event(&t));
+
+    if (clear_first) {
+        test_gpu_clear_display_event(&t);
+        test_gpu_display_info(&t, &width, &height);
+    } else {
+        test_gpu_display_info(&t, &width, &height);
+        test_gpu_clear_display_event(&t);
+    }
+    g_assert_cmpuint(width, ==, 0);
+
+    g_assert_true(test_gpu_display_event(&t));
+    test_gpu_display_info(&t, &width, &height);
+    g_assert_cmpuint(width, ==, 1600);
+    g_assert_cmpuint(height, ==, 900);
+
+    test_gpu_stop(&t);
+}
+
 static gsize
 get_console_ids_count(GDBusConnection *conn)
 {
@@ -642,6 +923,16 @@ main(int argc, char **argv)
     if (qtest_has_device("virtio-gpu-pci")) {
         qtest_add_func("/dbus-display/uiinfo/initial",
                        test_dbus_display_uiinfo_initial);
+        qtest_add_func("/dbus-display/gpu/first-off",
+                       test_dbus_display_gpu_first_off);
+        qtest_add_func("/dbus-display/gpu/event-clear",
+                       test_dbus_display_gpu_event_clear);
+        qtest_add_data_func("/dbus-display/gpu/swap/read-first",
+                            GINT_TO_POINTER(false),
+                            test_dbus_display_gpu_swap);
+        qtest_add_data_func("/dbus-display/gpu/swap/clear-first",
+                            GINT_TO_POINTER(true),
+                            test_dbus_display_gpu_swap);
     }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
