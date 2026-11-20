@@ -109,14 +109,23 @@ virtio_gpu_base_generate_edid(VirtIOGPUBase *g, int scanout,
 {
     size_t output_idx;
     VirtIOGPUOutputList *node;
+    const QemuUIIdentity *id = &g->req_state[scanout].identity;
     qemu_edid_info info = {
         .width_mm = g->req_state[scanout].width_mm,
         .height_mm = g->req_state[scanout].height_mm,
         .prefx = g->req_state[scanout].width,
         .prefy = g->req_state[scanout].height,
         .refresh_rate = g->req_state[scanout].refresh_rate,
+        .vendor = id->vendor,
+        .product = id->product,
+        .serial_number = id->serial_number,
+        .name = id->name[0] ? id->name : NULL,
+        .serial = id->serial_string[0] ? id->serial_string : NULL,
     };
 
+    QEMU_BUILD_BUG_ON(QEMU_UI_IDENTITY_TEXT != EDID_NAME_MAX_LENGTH);
+
+    /* An output named in the device's configuration keeps that name. */
     for (output_idx = 0, node = g->conf.outputs;
          output_idx <= scanout && node; output_idx++, node = node->next) {
         if (output_idx == scanout && node->value->name) {
@@ -145,10 +154,16 @@ static void virtio_gpu_text_update(void *opaque, uint32_t *chardata)
 static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
 {
     VirtIOGPUBase *g = opaque;
+    bool other_monitor;
 
     if (idx >= g->conf.max_outputs) {
         return;
     }
+
+    other_monitor = info->connected &&
+        (g->enabled_output_bitmask & (1 << idx)) &&
+        (g->guest_seen_outputs & (1 << idx)) &&
+        !qemu_ui_identity_equal(&g->req_state[idx].identity, &info->identity);
 
     g->req_state[idx].x = info->xoff;
     g->req_state[idx].y = info->yoff;
@@ -157,10 +172,19 @@ static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
     g->req_state[idx].height = info->height;
     g->req_state[idx].width_mm = info->width_mm;
     g->req_state[idx].height_mm = info->height_mm;
+    g->req_state[idx].identity = info->identity;
 
     if (!info->connected) {
         g->enabled_output_bitmask &= ~(1 << idx);
         g->deferred_outputs &= ~(1 << idx);
+    } else if (other_monitor) {
+        /*
+         * Another monitor on an output the guest has seen: a guest that only
+         * reads the new EDID may keep what it knew of the first one. Take the
+         * output away, and give it back once the guest has seen it go.
+         */
+        g->enabled_output_bitmask &= ~(1 << idx);
+        g->deferred_outputs |= (1 << idx);
     } else if ((g->guest_seen_outputs & (1 << idx)) &&
                !(g->enabled_output_bitmask & (1 << idx))) {
         /*

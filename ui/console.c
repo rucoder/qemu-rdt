@@ -707,6 +707,16 @@ const QemuUIInfo *qemu_console_get_ui_info(const QemuConsole *con)
     return &con->ui_info;
 }
 
+bool qemu_ui_identity_equal(const QemuUIIdentity *a, const QemuUIIdentity *b)
+{
+    return !strncmp(a->vendor, b->vendor, sizeof(a->vendor)) &&
+           a->product == b->product &&
+           a->serial_number == b->serial_number &&
+           !strncmp(a->name, b->name, sizeof(a->name)) &&
+           !strncmp(a->serial_string, b->serial_string,
+                    sizeof(a->serial_string));
+}
+
 static bool qemu_ui_info_equal(const QemuUIInfo *a, const QemuUIInfo *b)
 {
     return a->width_mm == b->width_mm &&
@@ -716,7 +726,8 @@ static bool qemu_ui_info_equal(const QemuUIInfo *a, const QemuUIInfo *b)
            a->width == b->width &&
            a->height == b->height &&
            a->refresh_rate == b->refresh_rate &&
-           a->connected == b->connected;
+           a->connected == b->connected &&
+           qemu_ui_identity_equal(&a->identity, &b->identity);
 }
 
 int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)

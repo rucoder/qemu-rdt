@@ -99,6 +99,7 @@ struct virtio_gpu_requested_state {
     uint32_t width, height;
     uint32_t refresh_rate;
     int x, y;
+    QemuUIIdentity identity;
 };
 
 enum virtio_gpu_base_conf_flags {
