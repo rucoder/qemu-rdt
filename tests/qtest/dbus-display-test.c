@@ -1355,6 +1355,51 @@ test_dbus_display_gpu_unchanged(void)
     test_gpu_stop(&t);
 }
 
+/* The 13 characters of the base-block text descriptor with @tag, or "". */
+static void
+test_edid_text(const uint8_t *edid, uint8_t tag, char text[14])
+{
+    text[0] = 0;
+    for (int i = 0; i < 4; i++) {
+        const uint8_t *desc = edid + 54 + 18 * i;
+
+        if (!desc[0] && !desc[1] && desc[3] == tag) {
+            memcpy(text, desc + 5, 13);
+            text[13] = 0;
+            return;
+        }
+    }
+}
+
+/* An output name of 13 characters is taken whole, and a longer one refused. */
+static void
+test_dbus_display_gpu_output_name(void)
+{
+    struct virtio_gpu_resp_edid resp = {};
+    TestGPU t = {};
+    char text[14];
+
+    if (g_test_subprocess()) {
+        qtest_quit(qtest_init("-vga none -device '{\"driver\":"
+                              " \"virtio-gpu-pci\", \"outputs\":"
+                              " [{\"name\": \"ABCDEFGHIJKLMN\"}]}'"));
+        return;
+    }
+    g_test_trap_subprocess(NULL, 0, 0);
+    g_test_trap_assert_failed();
+    g_test_trap_assert_stderr("*invalid output name*");
+
+    test_gpu_start_device(&t, "'{\"driver\": \"virtio-gpu-pci\","
+                              " \"addr\": \"04.0\","
+                              " \"outputs\": [{\"name\": \"ABCDEFGHIJKLM\"}]}'",
+                          1);
+    test_gpu_edid(&t, 0, &resp);
+    test_edid_text(resp.edid, 0xfc, text);
+    g_assert_cmpstr(text, ==, "ABCDEFGHIJKLM");
+
+    test_gpu_stop(&t);
+}
+
 static gsize
 get_console_ids_count(GDBusConnection *conn)
 {
@@ -1487,6 +1532,8 @@ main(int argc, char **argv)
                        test_dbus_display_gpu_outputs_configured);
         qtest_add_func("/dbus-display/gpu/unchanged",
                        test_dbus_display_gpu_unchanged);
+        qtest_add_func("/dbus-display/gpu/output-name",
+                       test_dbus_display_gpu_output_name);
     }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);

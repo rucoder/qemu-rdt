@@ -1,7 +1,7 @@
 #ifndef EDID_H
 #define EDID_H
 
-#define EDID_NAME_MAX_LENGTH 12
+#define EDID_NAME_MAX_LENGTH 13
 
 /* The preferred mode of an EDID whose qemu_edid_info gives none */
 #define EDID_DEFAULT_PREFX 1280

@@ -41,6 +41,7 @@ tests = {
   'test-bitops': [],
   'test-bitcnt': [],
   'test-qgraph': ['../qtest/libqos/qgraph.c'],
+  'test-edid': ['../../hw/display/edid-generate.c'],
   'check-qom-interface': [qom],
   'check-qom-proplist': [qom],
   'test-qemu-opts': [],
