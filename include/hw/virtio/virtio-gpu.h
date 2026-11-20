@@ -172,6 +172,10 @@ struct VirtIOGPUBase {
     struct virtio_gpu_scanout scanout[VIRTIO_GPU_MAX_SCANOUTS];
 
     int enabled_output_bitmask;
+    /* The outputs enabled in the display info the guest read last */
+    uint32_t guest_seen_outputs;
+    /* Outputs given back before the guest saw them go */
+    uint32_t deferred_outputs;
     /* A display event was raised since the guest last read the display info */
     bool display_info_stale;
     /* ... and was raised again after the guest cleared it */

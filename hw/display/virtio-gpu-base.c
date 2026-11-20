@@ -40,6 +40,11 @@ virtio_gpu_base_reset(VirtIOGPUBase *g)
     g->display_info_stale = false;
     g->display_event_repeated = false;
 
+    /* A reset guest has seen no output, so none is held back. */
+    g->enabled_output_bitmask |= g->deferred_outputs;
+    g->deferred_outputs = 0;
+    g->guest_seen_outputs = 0;
+
     for (i = 0; i < g->conf.max_outputs; i++) {
         g->scanout[i].resource_id = 0;
         g->scanout[i].width = 0;
@@ -64,6 +69,18 @@ virtio_gpu_base_fill_display_info(VirtIOGPUBase *g,
         }
     }
     g->display_info_stale = false;
+
+    /*
+     * The guest has now seen every output that went away go. Those given back
+     * meanwhile come back now, with an event of their own, so that the guest
+     * sees a new monitor plugged in rather than the old one still there.
+     */
+    g->guest_seen_outputs = g->enabled_output_bitmask;
+    if (g->deferred_outputs) {
+        g->enabled_output_bitmask |= g->deferred_outputs;
+        g->deferred_outputs = 0;
+        virtio_gpu_notify_event(g, VIRTIO_GPU_EVENT_DISPLAY);
+    }
 }
 
 /*
@@ -141,10 +158,22 @@ static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
     g->req_state[idx].width_mm = info->width_mm;
     g->req_state[idx].height_mm = info->height_mm;
 
-    if (info->connected) {
-        g->enabled_output_bitmask |= (1 << idx);
-    } else {
+    if (!info->connected) {
         g->enabled_output_bitmask &= ~(1 << idx);
+        g->deferred_outputs &= ~(1 << idx);
+    } else if ((g->guest_seen_outputs & (1 << idx)) &&
+               !(g->enabled_output_bitmask & (1 << idx))) {
+        /*
+         * The output went away and comes back before the guest has read the
+         * display info without it: the guest would see no change and keep
+         * the monitor it knew. Hold it back until the guest has seen it go.
+         * The event for its going is still pending, and reading the display
+         * info for it gives the output back.
+         */
+        g->deferred_outputs |= (1 << idx);
+        return;
+    } else {
+        g->enabled_output_bitmask |= (1 << idx);
     }
 
     /* send event to guest */
