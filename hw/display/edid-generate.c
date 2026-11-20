@@ -383,7 +383,7 @@ void qemu_edid_generate(uint8_t *edid, size_t size,
 {
     Timings timings;
     uint8_t *desc = edid + 54;
-    uint8_t *xtra3 = NULL;
+    uint8_t xtra3[18] = { 0 };
     uint8_t *dta = NULL;
     uint8_t *did = NULL;
     uint32_t width_mm, height_mm;
@@ -504,9 +504,7 @@ void qemu_edid_generate(uint8_t *edid, size_t size,
         desc = edid_desc_next(edid, dta, desc);
     }
 
-    xtra3 = desc;
     edid_desc_xtra3_std(xtra3);
-    desc = edid_desc_next(edid, dta, desc);
     edid_fill_modes(edid, xtra3, dta, info->maxx, info->maxy);
     /*
      * dta video data block is finished at thus point,
@@ -523,6 +521,16 @@ void qemu_edid_generate(uint8_t *edid, size_t size,
 
     if (desc && info->serial) {
         edid_desc_text(desc, 0xff, info->serial);
+        desc = edid_desc_next(edid, dta, desc);
+    }
+
+    /*
+     * The base block has room for four descriptors, and guests look for the
+     * monitor's name and serial number there: the established timings III
+     * come after them, in the extension when the base block is full.
+     */
+    if (desc) {
+        memcpy(desc, xtra3, sizeof(xtra3));
         desc = edid_desc_next(edid, dta, desc);
     }
 
