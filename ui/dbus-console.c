@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 #include "qemu/osdep.h"
+#include "qemu/cutils.h"
 #include "qemu/error-report.h"
 #include "qapi/error.h"
 #include "ui/input.h"
@@ -560,6 +561,13 @@ dbus_ui_info_get(DBusDisplayConsole *ddc,
     g_variant_dict_insert(&dict, "width", "u", ui_info.width);
     g_variant_dict_insert(&dict, "height", "u", ui_info.height);
     g_variant_dict_insert(&dict, "refresh_rate", "u", ui_info.refresh_rate);
+    g_variant_dict_insert(&dict, "vendor", "s", ui_info.identity.vendor);
+    g_variant_dict_insert(&dict, "product", "q", ui_info.identity.product);
+    g_variant_dict_insert(&dict, "serial_number", "u",
+                          ui_info.identity.serial_number);
+    g_variant_dict_insert(&dict, "name", "s", ui_info.identity.name);
+    g_variant_dict_insert(&dict, "serial_string", "s",
+                          ui_info.identity.serial_string);
 
     qemu_dbus_display1_uiinfo_complete_get(ddc->iface_ui_info, invocation,
                                            g_variant_dict_end(&dict));
@@ -583,6 +591,57 @@ dbus_ui_info_apply_lookup(GDBusMethodInvocation *invocation,
                                               key, fmt_str);
         return false;
     }
+    return true;
+}
+
+/*
+ * A text key of the monitor's identity, into @res of @size bytes: three
+ * upper-case letters for a PNP ID, else up to @size - 1 printable ASCII
+ * characters. An empty string clears it.
+ */
+static bool
+dbus_ui_info_apply_text(GDBusMethodInvocation *invocation,
+                        GVariantDict *dict,
+                        const gchar *key,
+                        char *res,
+                        size_t size,
+                        bool pnp_id)
+{
+    g_autofree gchar *s = NULL;
+    size_t i, len;
+
+    if (!dbus_ui_info_apply_lookup(invocation, dict, key, "s", &s)) {
+        return false;
+    }
+    if (!s) {
+        return true;
+    }
+
+    len = strlen(s);
+    for (i = 0; i < len; i++) {
+        if (pnp_id ? !g_ascii_isupper(s[i]) : !g_ascii_isprint(s[i])) {
+            break;
+        }
+    }
+    if (pnp_id && len && (len != 3 || i < len)) {
+        g_dbus_method_invocation_return_error(invocation,
+                                              DBUS_DISPLAY_ERROR,
+                                              DBUS_DISPLAY_ERROR_INVALID,
+                                              "%s must be three upper-case "
+                                              "letters, or empty", key);
+        return false;
+    }
+    if (!pnp_id && (len >= size || i < len)) {
+        g_dbus_method_invocation_return_error(invocation,
+                                              DBUS_DISPLAY_ERROR,
+                                              DBUS_DISPLAY_ERROR_INVALID,
+                                              "%s must be at most %zu "
+                                              "printable ASCII characters",
+                                              key, size - 1);
+        return false;
+    }
+
+    pstrcpy(res, size, s);
     return true;
 }
 
@@ -617,7 +676,21 @@ dbus_ui_info_apply(DBusDisplayConsole *ddc,
         !dbus_ui_info_apply_lookup(invocation, &dict, "height", "u",
                                    &ui_info.height) ||
         !dbus_ui_info_apply_lookup(invocation, &dict, "refresh_rate", "u",
-                                   &ui_info.refresh_rate)) {
+                                   &ui_info.refresh_rate) ||
+        !dbus_ui_info_apply_text(invocation, &dict, "vendor",
+                                 ui_info.identity.vendor,
+                                 sizeof(ui_info.identity.vendor), true) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "product", "q",
+                                   &ui_info.identity.product) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "serial_number", "u",
+                                   &ui_info.identity.serial_number) ||
+        !dbus_ui_info_apply_text(invocation, &dict, "name",
+                                 ui_info.identity.name,
+                                 sizeof(ui_info.identity.name), false) ||
+        !dbus_ui_info_apply_text(invocation, &dict, "serial_string",
+                                 ui_info.identity.serial_string,
+                                 sizeof(ui_info.identity.serial_string),
+                                 false)) {
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
     /* The interface has no other way to say there is no monitor. */

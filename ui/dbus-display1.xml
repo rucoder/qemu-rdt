@@ -1193,6 +1193,26 @@
         - ``width`` (u): the console width in pixels.
         - ``height`` (u): the console height in pixels.
         - ``refresh_rate`` (u): the display refresh rate in millihertz.
+        - ``vendor`` (s): the monitor's manufacturer, the three upper-case
+          letters of its PNP ID.
+        - ``product`` (q): the monitor's product code.
+        - ``serial_number`` (u): the monitor's 32-bit serial number.
+        - ``name`` (s): the monitor's name, up to 13 printable ASCII
+          characters.
+        - ``serial_string`` (s): the monitor's serial number as text, up to
+          13 printable ASCII characters.
+
+        A zero ``width`` or ``height`` means that no monitor shows the
+        console.
+
+        ``vendor``, ``product``, ``serial_number``, ``name`` and
+        ``serial_string`` name the monitor that shows the console, as its
+        own EDID does. A device that gives the guest an EDID made from them
+        (virtio-gpu) puts them in it, and other devices ignore them. Zero or
+        an empty string leaves the device's own value, and an output named
+        in the device's configuration keeps that name. Another monitor on an
+        output the guest has seen shows to the guest as the first one
+        unplugged and the other plugged in.
     -->
     <method name="Get">
       <arg name="ui_info" type="a{sv}" direction="out"/>
@@ -1207,8 +1227,8 @@
 
         The properties will be merged with existing values.
         Extra keys will be ignored.
-        The invocation will fail if any key has the wrong type,
-        leaving the UI info unchanged.
+        The invocation will fail if any key has the wrong type or a value
+        out of its range, leaving the UI info unchanged.
     -->
     <method name="Apply">
       <arg name="ui_info" type="a{sv}" direction="in"/>
