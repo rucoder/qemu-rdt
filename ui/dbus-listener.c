@@ -73,6 +73,10 @@ struct _DBusDisplayListener {
     enum share_kind ds_share;
     /* true until a Scanout or ScanoutMap of ds has been sent */
     bool ds_scanout_pending;
+    /* the peer has the GL scanout that updates refer to */
+    bool gl_scanout;
+    /* a scanout failed, and none has worked since: reported already */
+    bool scanout_failed;
 
     bool ds_mapped;
     bool can_share_map;
@@ -124,10 +128,29 @@ static void dbus_scanout_disable(DisplayChangeListener *dcl)
     DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
 
     ddl->scanout_dmabuf = NULL;
+    ddl->gl_scanout = false;
     ddl_discard_display_messages(ddl);
 
     qemu_dbus_display1_listener_call_disable(
         ddl->proxy, G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
+}
+
+/*
+ * The peer cannot have this scanout: tell it its scanout is gone, so that
+ * it does not go on showing the last one as if it were this one, and say
+ * why, once until a scanout works again.
+ */
+static void dbus_scanout_failed(DisplayChangeListener *dcl, const char *why)
+{
+    DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
+
+    if (ddl->scanout_failed) {
+        return;
+    }
+    error_report("dbus: console %d: %s", qemu_console_get_index(dcl->con),
+                 why);
+    ddl->scanout_failed = true;
+    dbus_scanout_disable(dcl);
 }
 
 #ifdef WIN32
@@ -259,6 +282,12 @@ static void dbus_call_update_gl(DisplayChangeListener *dcl,
 #endif
 
     trace_dbus_update_gl(x, y, w, h);
+
+#if defined(CONFIG_GBM) || defined(WIN32)
+    if (!ddl->gl_scanout) {
+        return;
+    }
+#endif
 
     glFlush();
 #ifdef CONFIG_GBM
@@ -428,6 +457,10 @@ static void dbus_scanout_dmabuf(DisplayChangeListener *dcl,
 
     if (dbus_call_scanout_dmabuf(ddl, dmabuf)) {
         ddl->scanout_dmabuf = dmabuf;
+        ddl->gl_scanout = true;
+        ddl->scanout_failed = false;
+    } else {
+        dbus_scanout_disable(dcl);
     }
 }
 #endif /* GBM */
@@ -613,19 +646,27 @@ static void dbus_scanout_texture(DisplayChangeListener *dcl,
 #if defined(CONFIG_GBM) || defined(WIN32)
     DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
 #endif
+#ifdef WIN32
+    bool shared;
+#endif
 
     trace_dbus_scanout_texture(tex_id, backing_y_0_top,
                                backing_width, backing_height, x, y, w, h);
+
+    if (!tex_id && !d3d_tex2d) {
+        dbus_scanout_failed(dcl, "no texture to scan out");
+        return;
+    }
+
 #ifdef CONFIG_GBM
     g_autoptr(QemuDmaBuf) dmabuf = NULL;
     int fd[DMABUF_MAX_PLANES], num_planes;
     uint32_t offset[DMABUF_MAX_PLANES], stride[DMABUF_MAX_PLANES], fourcc;
     uint64_t modifier;
 
-    assert(tex_id);
     if (!egl_dmabuf_export_texture(tex_id, fd, (EGLint *)offset, (EGLint *)stride,
                                    (EGLint *)&fourcc, &num_planes, &modifier)) {
-        error_report("%s: failed to export dmabuf for texture", __func__);
+        dbus_scanout_failed(dcl, "failed to export the texture as a dmabuf");
         return;
     }
     dmabuf = qemu_dmabuf_new(w, h, offset, stride, x, y, backing_width,
@@ -634,6 +675,10 @@ static void dbus_scanout_texture(DisplayChangeListener *dcl,
 
     if (dbus_call_scanout_dmabuf(ddl, dmabuf)) {
         ddl->scanout_dmabuf = NULL;
+        ddl->gl_scanout = true;
+        ddl->scanout_failed = false;
+    } else {
+        dbus_scanout_disable(dcl);
     }
 #endif
 
@@ -643,12 +688,23 @@ static void dbus_scanout_texture(DisplayChangeListener *dcl,
     assert(surface_height(ddl->ds) == h);
 
     if (d3d_tex2d) {
-        dbus_scanout_share_d3d_texture(ddl, d3d_tex2d, backing_y_0_top,
-                                       backing_width, backing_height, x, y, w, h);
+        shared = dbus_scanout_share_d3d_texture(ddl, d3d_tex2d,
+                                                backing_y_0_top,
+                                                backing_width, backing_height,
+                                                x, y, w, h);
     } else {
-        dbus_scanout_map(ddl);
-        egl_fb_setup_for_tex(&ddl->fb, backing_width, backing_height, tex_id, false);
+        shared = dbus_scanout_map(ddl);
+        if (shared) {
+            egl_fb_setup_for_tex(&ddl->fb, backing_width, backing_height,
+                                 tex_id, false);
+        }
     }
+    if (!shared) {
+        dbus_scanout_failed(dcl, "failed to share the texture");
+        return;
+    }
+    ddl->gl_scanout = true;
+    ddl->scanout_failed = false;
 #endif
 }
 
