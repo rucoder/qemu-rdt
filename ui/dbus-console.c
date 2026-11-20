@@ -198,16 +198,7 @@ dbus_console_set_ui_info(DBusDisplayConsole *ddc,
                          guint arg_width,
                          guint arg_height)
 {
-    QemuUIInfo info = {
-        .width_mm = arg_width_mm,
-        .height_mm = arg_height_mm,
-        .xoff = arg_xoff,
-        .yoff = arg_yoff,
-        .width = arg_width,
-        .height = arg_height,
-        /* The interface has no other way to say there is no monitor. */
-        .connected = arg_width && arg_height,
-    };
+    QemuUIInfo info;
 
     if (!qemu_console_ui_info_supported(ddc->dcl.con)) {
         g_dbus_method_invocation_return_error(invocation,
@@ -216,6 +207,17 @@ dbus_console_set_ui_info(DBusDisplayConsole *ddc,
                                               "SetUIInfo is not supported");
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
+
+    /* What SetUIInfo does not take stays as UIInfo.Apply set it. */
+    info = *qemu_console_get_ui_info(ddc->dcl.con);
+    info.width_mm = arg_width_mm;
+    info.height_mm = arg_height_mm;
+    info.xoff = arg_xoff;
+    info.yoff = arg_yoff;
+    info.width = arg_width;
+    info.height = arg_height;
+    /* The interface has no other way to say there is no monitor. */
+    info.connected = arg_width && arg_height;
 
     qemu_console_set_ui_info(ddc->dcl.con, &info, false);
     qemu_dbus_display1_console_complete_set_uiinfo(ddc->iface, invocation);

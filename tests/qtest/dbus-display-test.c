@@ -548,6 +548,67 @@ test_dbus_display_uiinfo_initial(void)
     qtest_quit(qts);
 }
 
+static guint32
+test_uiinfo_get_u(QemuDBusDisplay1UIInfo *ui_info, const char *key)
+{
+    g_autoptr(GError) err = NULL;
+    g_autoptr(GVariant) info = NULL;
+    guint32 value = 0;
+
+    qemu_dbus_display1_uiinfo_call_get_sync(ui_info, G_DBUS_CALL_FLAGS_NONE,
+                                            -1, &info, NULL, &err);
+    g_assert_no_error(err);
+    g_assert_true(g_variant_lookup(info, key, "u", &value));
+    return value;
+}
+
+/* Console.SetUIInfo leaves what it does not take as UIInfo.Apply set it. */
+static void
+test_dbus_display_uiinfo_legacy(void)
+{
+    g_autoptr(GError) err = NULL;
+    g_autoptr(GDBusConnection) conn = NULL;
+    QemuDBusDisplay1UIInfo *ui_info = NULL;
+    QemuDBusDisplay1Console *console = NULL;
+    QTestState *qts = NULL;
+    GVariantBuilder b;
+
+    test_setup_args(&qts, &conn,
+                    "-vga none -device virtio-gpu-pci"
+                    " -display dbus,p2p=yes -name dbus-test");
+    ui_info = QEMU_DBUS_DISPLAY1_UIINFO(
+        qemu_dbus_display1_uiinfo_proxy_new_sync(
+            conn, G_DBUS_PROXY_FLAGS_NONE, NULL,
+            DBUS_DISPLAY1_ROOT "/Console_0", NULL, &err));
+    g_assert_no_error(err);
+    console = QEMU_DBUS_DISPLAY1_CONSOLE(
+        qemu_dbus_display1_console_proxy_new_sync(
+            conn, G_DBUS_PROXY_FLAGS_NONE, NULL,
+            DBUS_DISPLAY1_ROOT "/Console_0", NULL, &err));
+    g_assert_no_error(err);
+
+    g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&b, "{sv}", "refresh_rate",
+                          g_variant_new_uint32(60000));
+    qemu_dbus_display1_uiinfo_call_apply_sync(
+        ui_info, g_variant_builder_end(&b),
+        G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+    g_assert_no_error(err);
+
+    qemu_dbus_display1_console_call_set_uiinfo_sync(
+        console, 300, 170, 0, 0, 1600, 900,
+        G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+    g_assert_no_error(err);
+
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1600);
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "refresh_rate"), ==, 60000);
+
+    g_clear_object(&ui_info);
+    g_clear_object(&console);
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+
 /*
  * A virtio-gpu driven from the test, as a guest would: what it reports for
  * output 0, and when, after a UI changes the monitor through D-Bus.
@@ -923,6 +984,8 @@ main(int argc, char **argv)
     if (qtest_has_device("virtio-gpu-pci")) {
         qtest_add_func("/dbus-display/uiinfo/initial",
                        test_dbus_display_uiinfo_initial);
+        qtest_add_func("/dbus-display/uiinfo/legacy",
+                       test_dbus_display_uiinfo_legacy);
         qtest_add_func("/dbus-display/gpu/first-off",
                        test_dbus_display_gpu_first_off);
         qtest_add_func("/dbus-display/gpu/event-clear",
