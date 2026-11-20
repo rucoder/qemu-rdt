@@ -1437,15 +1437,6 @@ void virtio_gpu_virgl_fence_poll(VirtIOGPU *g)
     virtio_gpu_fence_poll(g);
 }
 
-void virtio_gpu_virgl_reset_scanout(VirtIOGPU *g)
-{
-    int i;
-
-    for (i = 0; i < g->parent_obj.conf.max_outputs; i++) {
-        virtio_gpu_disable_scanout(g, i);
-    }
-}
-
 static bool virtio_gpu_virgl_reset(VirtIOGPU *g)
 {
     VirtIOGPUGL *gl = VIRTIO_GPU_GL(g);

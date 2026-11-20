@@ -89,7 +89,6 @@ static void virtio_gpu_gl_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
 
 static void virtio_gpu_gl_reset(VirtIODevice *vdev)
 {
-    VirtIOGPU *g = VIRTIO_GPU(vdev);
     VirtIOGPUGL *gl = VIRTIO_GPU_GL(vdev);
 
     virtio_gpu_reset(vdev);
@@ -99,7 +98,6 @@ static void virtio_gpu_gl_reset(VirtIODevice *vdev)
      * thread, and when the renderer is unblocked.
      */
     if (gl->renderer_state == RS_INITED) {
-        virtio_gpu_virgl_reset_scanout(g);
         gl->renderer_state = RS_RESET;
     }
 }
