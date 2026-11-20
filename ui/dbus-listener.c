@@ -73,6 +73,8 @@ struct _DBusDisplayListener {
     enum share_kind ds_share;
     /* true until a Scanout or ScanoutMap of ds has been sent */
     bool ds_scanout_pending;
+    /* the peer has a texture or dmabuf scanout that updates refer to */
+    bool gl_scanout;
 
     bool ds_mapped;
     bool can_share_map;
@@ -124,6 +126,7 @@ static void dbus_scanout_disable(DisplayChangeListener *dcl)
     DBusDisplayListener *ddl = container_of(dcl, DBusDisplayListener, dcl);
 
     ddl->scanout_dmabuf = NULL;
+    ddl->gl_scanout = false;
     ddl_discard_display_messages(ddl);
 
     qemu_dbus_display1_listener_call_disable(
@@ -259,6 +262,12 @@ static void dbus_call_update_gl(DisplayChangeListener *dcl,
 #endif
 
     trace_dbus_update_gl(x, y, w, h);
+
+#if defined(CONFIG_GBM) || defined(WIN32)
+    if (!ddl->gl_scanout) {
+        return;
+    }
+#endif
 
     glFlush();
 #ifdef CONFIG_GBM
@@ -428,6 +437,9 @@ static void dbus_scanout_dmabuf(DisplayChangeListener *dcl,
 
     if (dbus_call_scanout_dmabuf(ddl, dmabuf)) {
         ddl->scanout_dmabuf = dmabuf;
+        ddl->gl_scanout = true;
+    } else {
+        dbus_scanout_disable(dcl);
     }
 }
 #endif /* GBM */
@@ -616,16 +628,28 @@ static void dbus_scanout_texture(DisplayChangeListener *dcl,
 
     trace_dbus_scanout_texture(tex_id, backing_y_0_top,
                                backing_width, backing_height, x, y, w, h);
+
+    if (!tex_id && !d3d_tex2d) {
+        /*
+         * Nothing to share, as with a console surface whose GL texture could
+         * not be created. Not a reason to stop the machine, but the peer must
+         * not go on showing its last scanout as if it were this one.
+         */
+        error_report_once("%s: no texture to scan out", __func__);
+        dbus_scanout_disable(dcl);
+        return;
+    }
+
 #ifdef CONFIG_GBM
     g_autoptr(QemuDmaBuf) dmabuf = NULL;
     int fd[DMABUF_MAX_PLANES], num_planes;
     uint32_t offset[DMABUF_MAX_PLANES], stride[DMABUF_MAX_PLANES], fourcc;
     uint64_t modifier;
 
-    assert(tex_id);
     if (!egl_dmabuf_export_texture(tex_id, fd, (EGLint *)offset, (EGLint *)stride,
                                    (EGLint *)&fourcc, &num_planes, &modifier)) {
         error_report("%s: failed to export dmabuf for texture", __func__);
+        dbus_scanout_disable(dcl);
         return;
     }
     dmabuf = qemu_dmabuf_new(w, h, offset, stride, x, y, backing_width,
@@ -634,6 +658,9 @@ static void dbus_scanout_texture(DisplayChangeListener *dcl,
 
     if (dbus_call_scanout_dmabuf(ddl, dmabuf)) {
         ddl->scanout_dmabuf = NULL;
+        ddl->gl_scanout = true;
+    } else {
+        dbus_scanout_disable(dcl);
     }
 #endif
 
@@ -649,6 +676,7 @@ static void dbus_scanout_texture(DisplayChangeListener *dcl,
         dbus_scanout_map(ddl);
         egl_fb_setup_for_tex(&ddl->fb, backing_width, backing_height, tex_id, false);
     }
+    ddl->gl_scanout = true;
 #endif
 }
 
