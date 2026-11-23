@@ -107,14 +107,23 @@ virtio_gpu_base_generate_edid(VirtIOGPUBase *g, int scanout,
 {
     size_t output_idx;
     VirtIOGPUOutputList *node;
+    const QemuUIIdentity *id = &g->req_state[scanout].identity;
     qemu_edid_info info = {
         .width_mm = g->req_state[scanout].width_mm,
         .height_mm = g->req_state[scanout].height_mm,
         .prefx = g->req_state[scanout].width,
         .prefy = g->req_state[scanout].height,
         .refresh_rate = g->req_state[scanout].refresh_rate,
+        .vendor = id->vendor[0] ? id->vendor : NULL,
+        .product = id->product,
+        .serial_number = id->serial_number,
+        .name = id->name[0] ? id->name : NULL,
+        .serial_string = id->serial_string[0] ? id->serial_string : NULL,
     };
 
+    QEMU_BUILD_BUG_ON(QEMU_UI_IDENTITY_TEXT_LEN != EDID_NAME_MAX_LENGTH);
+
+    /* An output named in the device's configuration keeps that name. */
     for (output_idx = 0, node = g->conf.outputs;
          output_idx <= scanout && node; output_idx++, node = node->next) {
         if (output_idx == scanout && node->value->name) {
@@ -144,10 +153,19 @@ static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
 {
     VirtIOGPUBase *g = opaque;
     uint32_t bit = 1u << idx;
+    bool same_monitor;
 
     if (idx >= g->conf.max_outputs) {
         return;
     }
+
+    /*
+     * A guest without VIRTIO_GPU_F_EDID reads no EDID, and tells monitors
+     * apart by their size only.
+     */
+    same_monitor =
+        !virtio_vdev_has_feature(VIRTIO_DEVICE(g), VIRTIO_GPU_F_EDID) ||
+        qemu_ui_identity_equal(&g->req_state[idx].identity, &info->identity);
 
     g->req_state[idx].x = info->xoff;
     g->req_state[idx].y = info->yoff;
@@ -156,6 +174,7 @@ static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
     g->req_state[idx].height = info->height;
     g->req_state[idx].width_mm = info->width_mm;
     g->req_state[idx].height_mm = info->height_mm;
+    g->req_state[idx].identity = info->identity;
 
     if (!info->connected) {
         g->connected_outputs &= ~bit;
@@ -170,6 +189,15 @@ static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
          * info shows it gone and gives it back.
          */
         g->connected_outputs |= bit;
+    } else if ((g->guest_seen_outputs & bit) && !same_monitor) {
+        /*
+         * Another monitor on an output the guest has seen: a guest that only
+         * reads the new EDID may keep what it knew of the first one. Take the
+         * output away and hold it back like one that went away and came
+         * back.
+         */
+        g->connected_outputs |= bit;
+        g->enabled_output_bitmask &= ~bit;
     } else {
         g->connected_outputs |= bit;
         g->enabled_output_bitmask |= bit;

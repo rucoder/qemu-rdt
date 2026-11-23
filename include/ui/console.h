@@ -105,6 +105,24 @@ typedef struct ScanoutTexture {
     void *d3d_tex2d;
 } ScanoutTexture;
 
+/* The text of an EDID descriptor: up to 13 characters */
+#define QEMU_UI_IDENTITY_TEXT_LEN 13
+
+/*
+ * A monitor as its EDID names it. A field that is zero or empty is not
+ * known, and a device keeps its own for it. Compared field by field in
+ * ui/console.c: add new fields there too.
+ */
+typedef struct QemuUIIdentity {
+    char      vendor[4];        /* PNP ID: three upper-case letters */
+    uint16_t  product;
+    uint32_t  serial_number;
+    char      name[QEMU_UI_IDENTITY_TEXT_LEN + 1];
+    char      serial_string[QEMU_UI_IDENTITY_TEXT_LEN + 1];
+} QemuUIIdentity;
+
+bool qemu_ui_identity_equal(const QemuUIIdentity *a, const QemuUIIdentity *b);
+
 /* Compared field by field in ui/console.c: add new fields there too. */
 typedef struct QemuUIInfo {
     /* physical dimension */
@@ -124,6 +142,8 @@ typedef struct QemuUIInfo {
      * back at.
      */
     bool      connected;
+    /* The monitor that shows the console, as far as the UI knows it */
+    QemuUIIdentity identity;
 } QemuUIInfo;
 
 /* cursor data format is 32bit RGBA */

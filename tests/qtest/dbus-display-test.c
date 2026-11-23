@@ -1400,6 +1400,64 @@ test_dbus_display_gpu_output_name(void)
     test_gpu_stop(&t);
 }
 
+/* A monitor's identity, as its EDID gives it. */
+typedef struct TestMonitor {
+    const char *vendor;
+    uint16_t product;
+    uint32_t serial_number;
+    const char *name;
+    const char *serial_string;
+} TestMonitor;
+
+/* Whether a text descriptor's 13 characters are @s, as an EDID pads it. */
+static bool
+test_edid_text_is(const char text[14], const char *s)
+{
+    size_t len = strlen(s);
+
+    return !strncmp(text, s, len) &&
+           (len == 13 ||
+            (text[len] == '\n' && strspn(text + len + 1, " ") == 12 - len));
+}
+
+/* Whether the EDID of output 0 names @m; no serial number text, none. */
+static bool
+test_gpu_edid_names(TestGPU *t, const TestMonitor *m)
+{
+    struct virtio_gpu_resp_edid resp = {};
+    uint16_t pnp_id = (m->vendor[0] - '@') << 10 |
+                      (m->vendor[1] - '@') << 5 |
+                      (m->vendor[2] - '@');
+    char text[14];
+
+    test_gpu_edid(t, 0, &resp);
+    if (lduw_be_p(resp.edid + 8) != pnp_id ||
+        lduw_le_p(resp.edid + 10) != m->product ||
+        (uint32_t)ldl_le_p(resp.edid + 12) != m->serial_number) {
+        return false;
+    }
+    test_edid_text(resp.edid, 0xfc, text);
+    if (!test_edid_text_is(text, m->name)) {
+        return false;
+    }
+    test_edid_text(resp.edid, 0xff, text);
+    return m->serial_string[0] ? test_edid_text_is(text, m->serial_string)
+                               : !text[0];
+}
+
+/* Without a monitor's identity, the guest's EDID names QEMU's own. */
+static void
+test_dbus_display_gpu_identity_default(void)
+{
+    static const TestMonitor qemu = { "RHT", 0x1234, 0, "QEMU Monitor", "" };
+    TestGPU t = {};
+
+    test_gpu_start(&t);
+    g_assert_true(test_gpu_edid_names(&t, &qemu));
+
+    test_gpu_stop(&t);
+}
+
 static gsize
 get_console_ids_count(GDBusConnection *conn)
 {
@@ -1534,6 +1592,8 @@ main(int argc, char **argv)
                        test_dbus_display_gpu_unchanged);
         qtest_add_func("/dbus-display/gpu/output-name",
                        test_dbus_display_gpu_output_name);
+        qtest_add_func("/dbus-display/gpu/identity/default",
+                       test_dbus_display_gpu_identity_default);
     }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
