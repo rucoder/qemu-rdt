@@ -21,6 +21,15 @@
 #include "trace.h"
 #include "qapi/qapi-types-virtio.h"
 
+static void virtio_gpu_notify_event(VirtIOGPUBase *g, uint32_t event_type)
+{
+    g->virtio_config.events_read |= event_type;
+    if (event_type & VIRTIO_GPU_EVENT_DISPLAY) {
+        g->repeat_display_event = true;
+    }
+    virtio_notify_config(&g->parent_obj);
+}
+
 void
 virtio_gpu_base_reset(VirtIOGPUBase *g)
 {
@@ -28,6 +37,10 @@ virtio_gpu_base_reset(VirtIOGPUBase *g)
 
     g->enable = 0;
     g->repeat_display_event = false;
+
+    /* A reset guest has seen no output, so none is held back. */
+    g->enabled_output_bitmask = g->connected_outputs;
+    g->guest_seen_outputs = 0;
 
     for (i = 0; i < g->conf.max_outputs; i++) {
         g->scanout[i].resource_id = 0;
@@ -43,6 +56,7 @@ void
 virtio_gpu_base_fill_display_info(VirtIOGPUBase *g,
                                   struct virtio_gpu_resp_display_info *dpy_info)
 {
+    uint32_t held;
     int i;
 
     for (i = 0; i < g->conf.max_outputs; i++) {
@@ -53,6 +67,18 @@ virtio_gpu_base_fill_display_info(VirtIOGPUBase *g,
         }
     }
     g->repeat_display_event = false;
+
+    /*
+     * The guest has now seen every output that went away go. Those held
+     * back meanwhile come back now, with an event of their own, so that the
+     * guest sees a monitor plugged in rather than the old one still there.
+     */
+    g->guest_seen_outputs = g->enabled_output_bitmask;
+    held = g->connected_outputs & ~g->enabled_output_bitmask;
+    if (held) {
+        g->enabled_output_bitmask |= held;
+        virtio_gpu_notify_event(g, VIRTIO_GPU_EVENT_DISPLAY);
+    }
 }
 
 /*
@@ -114,18 +140,10 @@ static void virtio_gpu_text_update(void *opaque, uint32_t *chardata)
 {
 }
 
-static void virtio_gpu_notify_event(VirtIOGPUBase *g, uint32_t event_type)
-{
-    g->virtio_config.events_read |= event_type;
-    if (event_type & VIRTIO_GPU_EVENT_DISPLAY) {
-        g->repeat_display_event = true;
-    }
-    virtio_notify_config(&g->parent_obj);
-}
-
 static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
 {
     VirtIOGPUBase *g = opaque;
+    uint32_t bit = 1u << idx;
 
     if (idx >= g->conf.max_outputs) {
         return;
@@ -139,10 +157,22 @@ static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)
     g->req_state[idx].width_mm = info->width_mm;
     g->req_state[idx].height_mm = info->height_mm;
 
-    if (info->connected) {
-        g->enabled_output_bitmask |= (1 << idx);
+    if (!info->connected) {
+        g->connected_outputs &= ~bit;
+        g->enabled_output_bitmask &= ~bit;
+    } else if ((g->guest_seen_outputs & bit) &&
+               !(g->enabled_output_bitmask & bit)) {
+        /*
+         * The output went away and comes back before the guest has read the
+         * display info without it: the guest would see no change in the
+         * display info, and could keep the monitor it knew. Hold it back,
+         * connected but not enabled: the guest's next read of the display
+         * info shows it gone and gives it back.
+         */
+        g->connected_outputs |= bit;
     } else {
-        g->enabled_output_bitmask &= ~(1 << idx);
+        g->connected_outputs |= bit;
+        g->enabled_output_bitmask |= bit;
     }
 
     /* send event to guest */
@@ -257,6 +287,7 @@ virtio_gpu_base_device_realize(DeviceState *qdev,
             return false;
         }
     }
+    g->connected_outputs = g->enabled_output_bitmask;
 
     if (virtio_gpu_virgl_enabled(g->conf)) {
         error_setg(&g->migration_blocker, "virgl is not yet migratable");

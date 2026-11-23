@@ -171,7 +171,16 @@ struct VirtIOGPUBase {
 
     struct virtio_gpu_scanout scanout[VIRTIO_GPU_MAX_SCANOUTS];
 
+    /* The outputs the guest is shown enabled */
     int enabled_output_bitmask;
+    /*
+     * The outputs a monitor shows, as the UI last said. One that is not
+     * enabled is held back until the guest has read the display info
+     * without it.
+     */
+    uint32_t connected_outputs;
+    /* The outputs enabled in the display info the guest read last */
+    uint32_t guest_seen_outputs;
     /*
      * Whether clearing the display event raises it again: set when one is
      * raised, cleared when the guest reads the display info, when the event
@@ -335,6 +344,7 @@ bool virtio_gpu_base_device_realize(DeviceState *qdev,
                                     Error **errp);
 void virtio_gpu_base_device_unrealize(DeviceState *qdev);
 void virtio_gpu_base_reset(VirtIOGPUBase *g);
+/* The answer to the guest's GET_DISPLAY_INFO, which it has now seen */
 void virtio_gpu_base_fill_display_info(VirtIOGPUBase *g,
                         struct virtio_gpu_resp_display_info *dpy_info);
 void virtio_gpu_base_events_clear(VirtIOGPUBase *g, uint32_t events_clear);

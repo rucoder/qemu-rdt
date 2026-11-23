@@ -731,6 +731,16 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
     }
 
     /*
+     * A monitor taken away must reach the device even when another is given
+     * back before the timer fires: the guest has to see the first one go.
+     */
+    if (timer_pending(con->ui_timer) && !con->ui_info.connected &&
+        info->connected) {
+        timer_del(con->ui_timer);
+        dpy_set_ui_info_timer(con);
+    }
+
+    /*
      * Typically we get a flood of these as the user resizes the window.
      * Wait until the dust has settled (one second without updates), then
      * go notify the guest.
