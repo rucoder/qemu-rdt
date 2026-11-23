@@ -80,11 +80,35 @@ static void test_edid_text(void)
     g_assert_cmpstr(text, ==, "ABCDEFGHIJKLM");
 }
 
+/* Whether a standard timing of the base block is @xres at 60 Hz, 4:3. */
+static bool has_std_4_3(const uint8_t *edid, uint32_t xres)
+{
+    for (int i = 38; i < 54; i += 2) {
+        if (edid[i] == xres / 8 - 31 && edid[i + 1] == 0x40) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* A mode is offered when it fits the maximum, and one that does not, not. */
+static void test_edid_max(void)
+{
+    uint8_t edid[EDID_SIZE];
+    qemu_edid_info info = { .maxx = 1400, .maxy = 1050 };
+
+    generate(edid, sizeof(edid), &info);
+    g_assert_true(has_std_4_3(edid, 1400));
+    g_assert_true(has_std_4_3(edid, 1280));
+    g_assert_false(has_std_4_3(edid, 1600));
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
 
     g_test_add_func("/edid/text", test_edid_text);
+    g_test_add_func("/edid/max", test_edid_max);
 
     return g_test_run();
 }

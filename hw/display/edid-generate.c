@@ -39,7 +39,7 @@ static const struct edid_mode {
     { .xres = 1920,   .yres = 1440,   .xtra3 = 11,   .bit = 5 },
     { .xres = 1856,   .yres = 1392,   .xtra3 = 10,   .bit = 3 },
     { .xres = 1792,   .yres = 1344,   .xtra3 = 10,   .bit = 5 },
-    { .xres = 1440,   .yres = 1050,   .xtra3 =  8,   .bit = 1 },
+    { .xres = 1400,   .yres = 1050,   .xtra3 =  8,   .bit = 1 },
     { .xres = 1360,   .yres =  768,   .xtra3 =  8,   .bit = 7 },
 
     /* established timings (all @ 60Hz) */
