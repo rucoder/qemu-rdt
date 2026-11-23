@@ -1309,7 +1309,11 @@ dbus_display_listener_new(const char *bus_name,
     con = qemu_console_lookup_by_index(dbus_display_console_get_index(console));
     assert(con);
 #ifdef CONFIG_OPENGL
-    if (display_opengl) {
+    /*
+     * A console without a GL context, as a text console, has surfaces
+     * without a texture: its listeners get the 2D operations.
+     */
+    if (display_opengl && qemu_console_has_gl(con)) {
         ops = &dbus_gl_dcl_ops;
     }
 #endif
