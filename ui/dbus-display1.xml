@@ -90,8 +90,9 @@
         @height: console height, in pixels.
 
         Modify the dimensions and display settings. A zero @width or @height
-        means that no monitor shows the console. The refresh rate, which
-        :dbus:meth:`org.qemu.Display1.UIInfo.Apply` sets, stays as it is.
+        means that no monitor shows the console. The refresh rate and the
+        monitor's identity, which :dbus:meth:`org.qemu.Display1.UIInfo.Apply`
+        sets, stay as they are.
 
         .. seealso::
 
@@ -1195,6 +1196,34 @@
         - ``width`` (u): the console width in pixels.
         - ``height`` (u): the console height in pixels.
         - ``refresh_rate`` (u): the display refresh rate in millihertz.
+        - ``vendor`` (s): the monitor's manufacturer, the three upper-case
+          letters of its PNP ID.
+        - ``product`` (q): the monitor's product code.
+        - ``serial_number`` (u): the monitor's 32-bit serial number.
+        - ``name`` (s): the monitor's name, up to 13 printable ASCII
+          characters.
+        - ``serial_string`` (s): the monitor's serial number as text, up to
+          13 printable ASCII characters.
+
+        A zero ``width`` or ``height`` means that no monitor shows the
+        console.
+
+        ``vendor``, ``product``, ``serial_number``, ``name`` and
+        ``serial_string`` name the monitor that shows the console, as its
+        own EDID does; ``name`` and ``serial_string`` are the text without
+        the line feed and spaces that pad it there. Zero or an empty string,
+        as they read when not given, leaves the device's own value, and an
+        output named in the device's configuration keeps that name.
+
+        virtio-gpu devices (virtio-gpu, virtio-vga, vhost-user-gpu) put them
+        in the EDID they give the guest. Changing them on an output the guest
+        has seen, giving them for the first time included, shows to a guest
+        that reads EDIDs as the monitor unplugged and another plugged in:
+        give them in the same call as the size. Other devices ignore them, a
+        vfio display included, whose EDID keeps QEMU's identity, but take a
+        change of them as any change of the UI info: a vfio display takes
+        its link down and brings it up again, which its guest sees as the
+        monitor unplugged and plugged in again.
     -->
     <method name="Get">
       <arg name="ui_info" type="a{sv}" direction="out"/>
@@ -1209,8 +1238,9 @@
 
         The properties will be merged with existing values.
         Extra keys will be ignored.
-        The invocation will fail if any key has the wrong type,
-        leaving the UI info unchanged.
+        The invocation will fail if any key has the wrong type, or an
+        identity value is not one an EDID can carry, leaving the UI info
+        unchanged.
     -->
     <method name="Apply">
       <arg name="ui_info" type="a{sv}" direction="in"/>

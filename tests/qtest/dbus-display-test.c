@@ -595,6 +595,25 @@ test_uiinfo_apply_ok(QemuDBusDisplay1UIInfo *ui_info, GVariant *dict)
 
     g_assert_cmpstr(error, ==, NULL);
 }
+
+static void
+test_uiinfo_apply_invalid(QemuDBusDisplay1UIInfo *ui_info, GVariant *dict)
+{
+    g_autofree char *error = test_uiinfo_apply(ui_info, dict);
+
+    g_assert_cmpstr(error, ==, "org.qemu.Display1.Error.Invalid");
+}
+
+static void
+test_uiinfo_assert_s(QemuDBusDisplay1UIInfo *ui_info, const char *key,
+                     const char *expected)
+{
+    g_autoptr(GVariant) info = test_uiinfo_get(ui_info);
+    const char *s = NULL;
+
+    g_assert_true(g_variant_lookup(info, key, "&s", &s));
+    g_assert_cmpstr(s, ==, expected);
+}
 #if defined(CONFIG_VNC) && !defined(WIN32)
 static void
 test_vnc_read(int fd, void *buf, size_t len)
@@ -678,7 +697,7 @@ test_dbus_display_uiinfo_vnc(void)
                     " -display dbus,p2p=yes -name dbus-test");
     ui_info = test_uiinfo_proxy(conn, 0);
     test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
-        "{'refresh_rate': <uint32 60000>}"));
+        "{'refresh_rate': <uint32 60000>, 'name': <'Name'>}"));
 
     fd = test_vnc_connect(qts);
     test_vnc_set_desktop_size(fd, 1600, 900);
@@ -689,6 +708,7 @@ test_dbus_display_uiinfo_vnc(void)
     }
     g_assert_cmpuint(test_uiinfo_get_u(ui_info, "height"), ==, 900);
     g_assert_cmpuint(test_uiinfo_get_u(ui_info, "refresh_rate"), ==, 60000);
+    test_uiinfo_assert_s(ui_info, "name", "Name");
 
     close(fd);
     g_clear_object(&ui_info);
@@ -728,13 +748,87 @@ test_dbus_display_uiinfo_legacy(void)
     g_assert_no_error(err);
 
     test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
-        "{'refresh_rate': <uint32 60000>}"));
+        "{'refresh_rate': <uint32 60000>, 'name': <'Name'>,"
+        " 'serial_number': <uint32 7>}"));
     test_console_set_ui_info(console, 1600, 900);
     g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1600);
     g_assert_cmpuint(test_uiinfo_get_u(ui_info, "refresh_rate"), ==, 60000);
+    test_uiinfo_assert_s(ui_info, "name", "Name");
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "serial_number"), ==, 7);
 
     g_clear_object(&ui_info);
     g_clear_object(&console);
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+
+/* @key set to @value, with a new size, is refused, and changes nothing. */
+static void
+test_uiinfo_refused(QemuDBusDisplay1UIInfo *ui_info,
+                    const char *key, GVariant *value)
+{
+    g_autoptr(GVariant) before = test_uiinfo_get(ui_info);
+    g_autoptr(GVariant) after = NULL;
+
+    test_uiinfo_apply_invalid(ui_info, g_variant_new_parsed(
+        "{'width': <uint32 640>, 'height': <uint32 480>, %s: %v}",
+        key, value));
+    after = test_uiinfo_get(ui_info);
+    g_assert_true(g_variant_equal(before, after));
+}
+
+/* The monitor's identity: given, read back, checked, and cleared. */
+static void
+test_dbus_display_uiinfo_identity(void)
+{
+    g_autoptr(GDBusConnection) conn = NULL;
+    g_autoptr(GVariant) info = NULL;
+    QemuDBusDisplay1UIInfo *ui_info;
+    QTestState *qts = NULL;
+    guint16 product = 0;
+
+    test_setup_device(&qts, &conn, "virtio-gpu-pci");
+    ui_info = test_uiinfo_proxy(conn, 0);
+
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'vendor': <'LNX'>, 'product': <%q>, 'serial_number': <%u>,"
+        " 'name': <'PiKVM V4 Plus'>, 'serial_string': <'CAFEBABE'>}",
+        0x7773, 0xcafebabe));
+    info = test_uiinfo_get(ui_info);
+    g_assert_true(g_variant_lookup(info, "product", "q", &product));
+    g_assert_cmphex(product, ==, 0x7773);
+    g_assert_cmphex(test_uiinfo_get_u(ui_info, "serial_number"), ==,
+                    0xcafebabe);
+    test_uiinfo_assert_s(ui_info, "vendor", "LNX");
+    test_uiinfo_assert_s(ui_info, "name", "PiKVM V4 Plus");
+    test_uiinfo_assert_s(ui_info, "serial_string", "CAFEBABE");
+
+    test_uiinfo_refused(ui_info, "vendor", g_variant_new_string("lnx"));
+    test_uiinfo_refused(ui_info, "vendor", g_variant_new_string("LN"));
+    test_uiinfo_refused(ui_info, "vendor", g_variant_new_string("LNXX"));
+    test_uiinfo_refused(ui_info, "vendor", g_variant_new_string("L1X"));
+    test_uiinfo_refused(ui_info, "name",
+                        g_variant_new_string("ABCDEFGHIJKLMN"));
+    test_uiinfo_refused(ui_info, "name", g_variant_new_string("Tab\there"));
+    test_uiinfo_refused(ui_info, "name",
+                        g_variant_new_string("M\xc3\xb6nitor"));
+    test_uiinfo_refused(ui_info, "serial_string",
+                        g_variant_new_string("12345678901234"));
+    test_uiinfo_refused(ui_info, "name", g_variant_new_uint32(1));
+    test_uiinfo_refused(ui_info, "product", g_variant_new_string("1"));
+
+    /* 13 characters fit. */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'serial_string': <'1234567890123'>}"));
+    test_uiinfo_assert_s(ui_info, "serial_string", "1234567890123");
+
+    /* An empty string clears a text, and a key of no use is ignored. */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'name': <''>, 'vendor': <''>, 'no-such-key': <uint32 1>}"));
+    test_uiinfo_assert_s(ui_info, "name", "");
+    test_uiinfo_assert_s(ui_info, "vendor", "");
+
+    g_clear_object(&ui_info);
     g_clear_object(&conn);
     qtest_quit(qts);
 }
@@ -1458,6 +1552,172 @@ test_dbus_display_gpu_identity_default(void)
     test_gpu_stop(&t);
 }
 
+static const TestMonitor test_monitor = {
+    "LNX", 0x7773, 0xcafebabe, "PiKVM V4 Plus", "CAFEBABE",
+};
+
+/* UIInfo.Apply of @m at 1920x1080 on output 0. */
+static void
+test_gpu_apply_monitor(TestGPU *t, const TestMonitor *m)
+{
+    test_uiinfo_apply_ok(t->ui_info[0], g_variant_new_parsed(
+        "{'width': <uint32 1920>, 'height': <uint32 1080>, 'vendor': <%s>,"
+        " 'product': <%q>, 'serial_number': <%u>, 'name': <%s>,"
+        " 'serial_string': <%s>}", m->vendor, m->product, m->serial_number,
+        m->name, m->serial_string));
+}
+
+static void
+test_gpu_wait_edid_names(TestGPU *t, const TestMonitor *m)
+{
+    gint64 end = g_get_monotonic_time() + GPU_TIMEOUT_US;
+
+    while (!test_gpu_edid_names(t, m)) {
+        g_assert_cmpint(g_get_monotonic_time(), <, end);
+        g_usleep(1000);
+    }
+}
+
+/* The EDID the guest reads names the monitor the client gave. */
+static void
+test_dbus_display_gpu_identity(void)
+{
+    TestGPU t = {};
+    TestMonitor m = test_monitor;
+
+    test_gpu_start(&t);
+    test_gpu_apply_monitor(&t, &m);
+    test_gpu_wait_edid_names(&t, &m);
+
+    /* No name, no serial number text: QEMU's own name, and no text. */
+    m.name = "";
+    m.serial_string = "";
+    test_gpu_apply_monitor(&t, &m);
+    m.name = "QEMU Monitor";
+    test_gpu_wait_edid_names(&t, &m);
+    test_gpu_stop(&t);
+
+    /* An output named in the configuration keeps that name. */
+    test_gpu_start_device(&t, "'{\"driver\": \"virtio-gpu-pci\","
+                              " \"addr\": \"04.0\","
+                              " \"outputs\": [{\"name\": \"CFG\"}]}'", 1);
+    m = test_monitor;
+    test_gpu_apply_monitor(&t, &m);
+    m.name = "CFG";
+    test_gpu_wait_edid_names(&t, &m);
+    test_gpu_stop(&t);
+}
+
+static const TestMonitor test_monitor_name = {
+    "LNX", 0x7773, 0xcafebabe, "Second", "CAFEBABE",
+};
+static const TestMonitor test_monitor_serial_number = {
+    "LNX", 0x7773, 0xcafebabf, "PiKVM V4 Plus", "CAFEBABE",
+};
+static const TestMonitor test_monitor_serial_string = {
+    "LNX", 0x7773, 0xcafebabe, "PiKVM V4 Plus", "CAFEBABF",
+};
+static const TestMonitor test_monitor_product = {
+    "LNX", 0x7774, 0xcafebabe, "PiKVM V4 Plus", "CAFEBABE",
+};
+static const TestMonitor test_monitor_vendor = {
+    "SAM", 0x7773, 0xcafebabe, "PiKVM V4 Plus", "CAFEBABE",
+};
+
+/*
+ * Another monitor of the same size, @data, on an output the guest has
+ * seen: the guest sees the first one go and the other come.
+ */
+static void
+test_dbus_display_gpu_identity_swap(const void *data)
+{
+    const TestMonitor *other = data;
+    TestGPU t = {};
+
+    test_gpu_start(&t);
+    test_gpu_apply_monitor(&t, &test_monitor);
+    test_gpu_wait_display_event(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1920);
+    test_gpu_clear_display_event(&t);
+
+    test_gpu_apply_monitor(&t, other);
+    test_gpu_wait_edid_names(&t, other);
+    test_gpu_assert_raised(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 0);
+    test_gpu_clear_display_event(&t);
+    test_gpu_assert_raised(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1920);
+    test_gpu_clear_display_event(&t);
+    test_gpu_assert_quiet(&t);
+
+    test_gpu_stop(&t);
+}
+
+/*
+ * A monitor's identity given only after the guest has seen the output
+ * with QEMU's own: that one goes, and this one comes.
+ */
+static void
+test_dbus_display_gpu_identity_first(void)
+{
+    TestGPU t = {};
+
+    test_gpu_start(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1280);
+    test_gpu_apply_monitor(&t, &test_monitor);
+    test_gpu_wait_edid_names(&t, &test_monitor);
+    test_gpu_assert_raised(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 0);
+    test_gpu_clear_display_event(&t);
+    test_gpu_assert_raised(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1920);
+    test_gpu_clear_display_event(&t);
+    test_gpu_assert_quiet(&t);
+
+    test_gpu_stop(&t);
+}
+
+/* A guest that reads no EDID sees another identity as the same monitor. */
+static void
+test_dbus_display_gpu_identity_no_edid(void)
+{
+    TestGPU t = {};
+
+    test_gpu_start_device(&t, "virtio-gpu-pci,addr=04.0,edid=off", 1);
+    test_gpu_apply_monitor(&t, &test_monitor);
+    test_gpu_wait_display_event(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1920);
+    test_gpu_clear_display_event(&t);
+
+    test_gpu_apply_monitor(&t, &test_monitor_name);
+    test_gpu_wait_display_event(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1920);
+
+    test_gpu_stop(&t);
+}
+
+#ifndef WIN32
+/*
+ * Two requests that reach the console at once reach the device as one:
+ * another monitor's identity, given and taken back together, is no other
+ * monitor to the guest. Passed on one at a time, they would take the
+ * output away.
+ */
+static void
+test_dbus_display_gpu_identity_merged(void)
+{
+    TestGPU t = {};
+
+    test_gpu_start(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1280);
+    test_gpu_apply_merged(&t, g_variant_new_parsed("{'name': <'Other'>}"),
+                          g_variant_new_parsed("{'name': <''>}"));
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1280);
+
+    test_gpu_stop(&t);
+}
+#endif
+
 static gsize
 get_console_ids_count(GDBusConnection *conn)
 {
@@ -1564,6 +1824,8 @@ main(int argc, char **argv)
 #endif
         qtest_add_func("/dbus-display/uiinfo/legacy",
                        test_dbus_display_uiinfo_legacy);
+        qtest_add_func("/dbus-display/uiinfo/identity",
+                       test_dbus_display_uiinfo_identity);
         qtest_add_func("/dbus-display/gpu/no-size",
                        test_dbus_display_gpu_no_size);
         qtest_add_func("/dbus-display/gpu/first-off",
@@ -1594,6 +1856,31 @@ main(int argc, char **argv)
                        test_dbus_display_gpu_output_name);
         qtest_add_func("/dbus-display/gpu/identity/default",
                        test_dbus_display_gpu_identity_default);
+        qtest_add_func("/dbus-display/gpu/identity",
+                       test_dbus_display_gpu_identity);
+        qtest_add_func("/dbus-display/gpu/identity/first",
+                       test_dbus_display_gpu_identity_first);
+        qtest_add_func("/dbus-display/gpu/identity/no-edid",
+                       test_dbus_display_gpu_identity_no_edid);
+#ifndef WIN32
+        qtest_add_func("/dbus-display/gpu/identity/merged",
+                       test_dbus_display_gpu_identity_merged);
+#endif
+        qtest_add_data_func("/dbus-display/gpu/identity/swap/name",
+                            &test_monitor_name,
+                            test_dbus_display_gpu_identity_swap);
+        qtest_add_data_func("/dbus-display/gpu/identity/swap/serial-number",
+                            &test_monitor_serial_number,
+                            test_dbus_display_gpu_identity_swap);
+        qtest_add_data_func("/dbus-display/gpu/identity/swap/serial-string",
+                            &test_monitor_serial_string,
+                            test_dbus_display_gpu_identity_swap);
+        qtest_add_data_func("/dbus-display/gpu/identity/swap/product",
+                            &test_monitor_product,
+                            test_dbus_display_gpu_identity_swap);
+        qtest_add_data_func("/dbus-display/gpu/identity/swap/vendor",
+                            &test_monitor_vendor,
+                            test_dbus_display_gpu_identity_swap);
     }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
