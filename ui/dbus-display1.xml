@@ -89,7 +89,9 @@
         @width: console width, in pixels.
         @height: console height, in pixels.
 
-        Modify the dimensions and display settings.
+        Modify the dimensions and display settings. A zero @width or @height
+        means that no monitor shows the console. The refresh rate, which
+        :dbus:meth:`org.qemu.Display1.UIInfo.Apply` sets, stays as it is.
 
         .. seealso::
 

@@ -697,6 +697,48 @@ test_dbus_display_uiinfo_vnc(void)
 }
 #endif
 
+static void
+test_console_set_ui_info(QemuDBusDisplay1Console *console,
+                         guint width, guint height)
+{
+    g_autoptr(GError) err = NULL;
+
+    qemu_dbus_display1_console_call_set_uiinfo_sync(
+        console, 300, 170, 0, 0, width, height,
+        G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+    g_assert_no_error(err);
+}
+
+/* Console.SetUIInfo leaves what it does not take as UIInfo.Apply set it. */
+static void
+test_dbus_display_uiinfo_legacy(void)
+{
+    g_autoptr(GError) err = NULL;
+    g_autoptr(GDBusConnection) conn = NULL;
+    QemuDBusDisplay1UIInfo *ui_info;
+    QemuDBusDisplay1Console *console;
+    QTestState *qts = NULL;
+
+    test_setup_device(&qts, &conn, "virtio-gpu-pci");
+    ui_info = test_uiinfo_proxy(conn, 0);
+    console = QEMU_DBUS_DISPLAY1_CONSOLE(
+        qemu_dbus_display1_console_proxy_new_sync(
+            conn, G_DBUS_PROXY_FLAGS_NONE, NULL,
+            DBUS_DISPLAY1_ROOT "/Console_0", NULL, &err));
+    g_assert_no_error(err);
+
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'refresh_rate': <uint32 60000>}"));
+    test_console_set_ui_info(console, 1600, 900);
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1600);
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "refresh_rate"), ==, 60000);
+
+    g_clear_object(&ui_info);
+    g_clear_object(&console);
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+
 /*
  * A virtio-gpu driven from the test, as a guest would: what it reports for
  * its outputs, and when, after a UI changes a monitor through D-Bus.
@@ -1417,6 +1459,8 @@ main(int argc, char **argv)
         qtest_add_func("/dbus-display/uiinfo/vnc",
                        test_dbus_display_uiinfo_vnc);
 #endif
+        qtest_add_func("/dbus-display/uiinfo/legacy",
+                       test_dbus_display_uiinfo_legacy);
         qtest_add_func("/dbus-display/gpu/no-size",
                        test_dbus_display_gpu_no_size);
         qtest_add_func("/dbus-display/gpu/first-off",
