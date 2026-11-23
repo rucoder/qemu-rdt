@@ -561,6 +561,14 @@ dbus_ui_info_get(DBusDisplayConsole *ddc,
     g_variant_dict_insert(&dict, "width", "u", ui_info.width);
     g_variant_dict_insert(&dict, "height", "u", ui_info.height);
     g_variant_dict_insert(&dict, "refresh_rate", "u", ui_info.refresh_rate);
+    /*
+     * Given only when false with a size kept, where Apply(Get()) must not
+     * bring the monitor back. Left out elsewhere, so that a client that
+     * changes the size in what Get returns gets what that size means.
+     */
+    if (!ui_info.connected && ui_info.width && ui_info.height) {
+        g_variant_dict_insert(&dict, "connected", "b", false);
+    }
     g_variant_dict_insert(&dict, "vendor", "s", ui_info.identity.vendor);
     g_variant_dict_insert(&dict, "product", "q", ui_info.identity.product);
     g_variant_dict_insert(&dict, "serial_number", "u",
@@ -667,6 +675,7 @@ dbus_ui_info_apply(DBusDisplayConsole *ddc,
                    GVariant *arg_ui_info)
 {
     QemuUIInfo ui_info;
+    gboolean connected = FALSE;
     g_auto(GVariantDict) dict = G_VARIANT_DICT_INIT(arg_ui_info);
 
     if (!qemu_console_ui_info_supported(ddc->dcl.con)) {
@@ -703,11 +712,26 @@ dbus_ui_info_apply(DBusDisplayConsole *ddc,
                                  sizeof(ui_info.identity.name)) ||
         !dbus_ui_info_apply_text(invocation, &dict, "serial_string",
                                  ui_info.identity.serial_string,
-                                 sizeof(ui_info.identity.serial_string))) {
+                                 sizeof(ui_info.identity.serial_string)) ||
+        !dbus_ui_info_apply_lookup(invocation, &dict, "connected", "b",
+                                   &connected)) {
         return DBUS_METHOD_INVOCATION_HANDLED;
     }
-    /* The interface has no other way to say there is no monitor. */
-    ui_info.connected = ui_info.width && ui_info.height;
+    if (g_variant_dict_contains(&dict, "connected")) {
+        if (connected && (!ui_info.width || !ui_info.height)) {
+            g_dbus_method_invocation_return_error(invocation,
+                                                  DBUS_DISPLAY_ERROR,
+                                                  DBUS_DISPLAY_ERROR_INVALID,
+                                                  "a connected monitor needs "
+                                                  "a width and a height");
+            return DBUS_METHOD_INVOCATION_HANDLED;
+        }
+        ui_info.connected = connected;
+    } else if (g_variant_dict_contains(&dict, "width") ||
+               g_variant_dict_contains(&dict, "height")) {
+        /* Without "connected", a zero size means no monitor. */
+        ui_info.connected = ui_info.width && ui_info.height;
+    }
 
     qemu_console_set_ui_info(ddc->dcl.con, &ui_info, false);
     qemu_dbus_display1_uiinfo_complete_apply(ddc->iface_ui_info, invocation);

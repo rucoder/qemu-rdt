@@ -90,9 +90,9 @@
         @height: console height, in pixels.
 
         Modify the dimensions and display settings. A zero @width or @height
-        means that no monitor shows the console. The refresh rate and the
-        monitor's identity, which :dbus:meth:`org.qemu.Display1.UIInfo.Apply`
-        sets, stay as they are.
+        means that no monitor shows the console, and a non-zero size that
+        one does. The refresh rate and the monitor's identity, which
+        :dbus:meth:`org.qemu.Display1.UIInfo.Apply` sets, stay as they are.
 
         .. seealso::
 
@@ -1186,7 +1186,8 @@
         Get:
         @ui_info: a dictionary of UI info properties.
 
-        Return the currently requested properties for the console.
+        Return the console's UI info: what UIs last asked for or, before any
+        did, the state the device's output started in.
         The list of returned properties may vary and be extended in the future.
 
         - ``width_mm`` (q): the physical display width in millimeters.
@@ -1196,6 +1197,10 @@
         - ``width`` (u): the console width in pixels.
         - ``height`` (u): the console height in pixels.
         - ``refresh_rate`` (u): the display refresh rate in millihertz.
+        - ``connected`` (b): false when no monitor shows the console while
+          ``width`` and ``height`` keep the size it comes back at; left out
+          where the size says it, a monitor showing the console when
+          neither ``width`` nor ``height`` is zero.
         - ``vendor`` (s): the monitor's manufacturer, the three upper-case
           letters of its PNP ID.
         - ``product`` (q): the monitor's product code.
@@ -1205,8 +1210,8 @@
         - ``serial_string`` (s): the monitor's serial number as text, up to
           13 printable ASCII characters.
 
-        A zero ``width`` or ``height`` means that no monitor shows the
-        console.
+        When no monitor shows the console, the device takes its output
+        away. Given back to ``Apply``, what ``Get`` returns changes nothing.
 
         ``vendor``, ``product``, ``serial_number``, ``name`` and
         ``serial_string`` name the monitor that shows the console, as its
@@ -1238,9 +1243,19 @@
 
         The properties will be merged with existing values.
         Extra keys will be ignored.
-        The invocation will fail if any key has the wrong type, or an
-        identity value is not one an EDID can carry, leaving the UI info
-        unchanged.
+        The invocation will fail if any key has the wrong type, an identity
+        value is not one an EDID can carry, or ``connected`` is true without
+        a size, leaving the UI info unchanged.
+
+        ``connected`` false takes the monitor away, keeping its size unless
+        one is given with it, and ``connected`` true brings it back, at the
+        size given with it or kept. Without ``connected``, a call with
+        ``width`` or ``height`` means no monitor if either is then zero and
+        a monitor if neither is, as for clients that do not know the key; a
+        call with neither leaves the monitor connected or not. So when
+        ``Get`` returns ``connected`` false, a dictionary it returned, given
+        back with a new size, keeps the monitor away: leave ``connected``
+        out of it, or set it true, to bring the monitor back.
     -->
     <method name="Apply">
       <arg name="ui_info" type="a{sv}" direction="in"/>

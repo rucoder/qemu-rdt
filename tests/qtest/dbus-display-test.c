@@ -614,6 +614,24 @@ test_uiinfo_assert_s(QemuDBusDisplay1UIInfo *ui_info, const char *key,
     g_assert_true(g_variant_lookup(info, key, "&s", &s));
     g_assert_cmpstr(s, ==, expected);
 }
+
+/* Whether a monitor shows the console, as a client tells from UIInfo.Get. */
+static gboolean
+test_uiinfo_get_connected(QemuDBusDisplay1UIInfo *ui_info)
+{
+    g_autoptr(GVariant) info = test_uiinfo_get(ui_info);
+    guint32 width = 0, height = 0;
+    gboolean connected;
+
+    if (g_variant_lookup(info, "connected", "b", &connected)) {
+        /* Given only where the size does not say it */
+        g_assert_false(connected);
+        return false;
+    }
+    g_assert_true(g_variant_lookup(info, "width", "u", &width));
+    g_assert_true(g_variant_lookup(info, "height", "u", &height));
+    return width && height;
+}
 #if defined(CONFIG_VNC) && !defined(WIN32)
 static void
 test_vnc_read(int fd, void *buf, size_t len)
@@ -756,6 +774,19 @@ test_dbus_display_uiinfo_legacy(void)
     test_uiinfo_assert_s(ui_info, "name", "Name");
     g_assert_cmpuint(test_uiinfo_get_u(ui_info, "serial_number"), ==, 7);
 
+    /*
+     * A zero size takes the monitor away, and a size brings it back, also
+     * after UIInfo.Apply took it away.
+     */
+    test_console_set_ui_info(console, 0, 0);
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    test_console_set_ui_info(console, 1600, 900);
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'connected': <false>}"));
+    test_console_set_ui_info(console, 1280, 720);
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+
     g_clear_object(&ui_info);
     g_clear_object(&console);
     g_clear_object(&conn);
@@ -827,6 +858,118 @@ test_dbus_display_uiinfo_identity(void)
         "{'name': <''>, 'vendor': <''>, 'no-such-key': <uint32 1>}"));
     test_uiinfo_assert_s(ui_info, "name", "");
     test_uiinfo_assert_s(ui_info, "vendor", "");
+
+    g_clear_object(&ui_info);
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+
+/* Whether a monitor shows the console, said or taken from the size. */
+static void
+test_dbus_display_uiinfo_connected(void)
+{
+    g_autoptr(GDBusConnection) conn = NULL;
+    g_autoptr(GVariant) info = NULL;
+    g_autoptr(GVariant) after = NULL;
+    QemuDBusDisplay1UIInfo *ui_info;
+    QTestState *qts = NULL;
+    GVariantDict dict;
+
+    test_setup_device(&qts, &conn, "virtio-gpu-pci,xres=1024,yres=768");
+    ui_info = test_uiinfo_proxy(conn, 0);
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+
+    /* Disconnected, the size stays for the monitor to come back with. */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'connected': <false>}"));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1024);
+
+    /* Neither the key nor a size: still disconnected. */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'name': <'Name'>}"));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'connected': <true>}"));
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 1024);
+
+    /* No key: a zero size is no monitor, as for older clients. */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'width': <uint32 0>, 'height': <uint32 1>}"));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'width': <uint32 800>, 'height': <uint32 600>}"));
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+
+    /* One size key alone: the other keeps its value. */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'width': <uint32 0>}"));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'width': <uint32 640>}"));
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "height"), ==, 600);
+
+    /* A connected monitor has a size, and "connected" is a boolean. */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'width': <uint32 0>}"));
+    test_uiinfo_apply_invalid(ui_info, g_variant_new_parsed(
+        "{'connected': <true>}"));
+    test_uiinfo_apply_invalid(ui_info, g_variant_new_parsed(
+        "{'connected': <true>, 'width': <uint32 0>, 'height': <uint32 1>}"));
+    test_uiinfo_apply_invalid(ui_info, g_variant_new_parsed(
+        "{'connected': <uint32 1>, 'width': <uint32 800>}"));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 0);
+
+    /*
+     * What UIInfo.Get returns, given back to UIInfo.Apply, changes nothing,
+     * and with a new size means what that size means, unless a client took
+     * the monitor away with "connected".
+     */
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'width': <uint32 1024>, 'height': <uint32 768>}"));
+    info = test_uiinfo_get(ui_info);
+    test_uiinfo_apply_ok(ui_info, info);
+    after = test_uiinfo_get(ui_info);
+    g_assert_true(g_variant_equal(info, after));
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+
+    g_variant_dict_init(&dict, info);
+    g_variant_dict_insert(&dict, "width", "u", 0);
+    g_variant_dict_insert(&dict, "height", "u", 0);
+    test_uiinfo_apply_ok(ui_info, g_variant_dict_end(&dict));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+
+    g_clear_pointer(&info, g_variant_unref);
+    info = test_uiinfo_get(ui_info);
+    g_variant_dict_init(&dict, info);
+    g_variant_dict_insert(&dict, "width", "u", 800);
+    g_variant_dict_insert(&dict, "height", "u", 600);
+    test_uiinfo_apply_ok(ui_info, g_variant_dict_end(&dict));
+    g_assert_true(test_uiinfo_get_connected(ui_info));
+
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'connected': <false>}"));
+    g_clear_pointer(&info, g_variant_unref);
+    info = test_uiinfo_get(ui_info);
+    test_uiinfo_apply_ok(ui_info, info);
+    g_clear_pointer(&after, g_variant_unref);
+    after = test_uiinfo_get(ui_info);
+    g_assert_true(g_variant_equal(info, after));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+
+    /*
+     * Such a dictionary, given back with a new size, keeps the monitor
+     * away: "connected" in it says so.
+     */
+    g_variant_dict_init(&dict, info);
+    g_variant_dict_insert(&dict, "width", "u", 640);
+    test_uiinfo_apply_ok(ui_info, g_variant_dict_end(&dict));
+    g_assert_false(test_uiinfo_get_connected(ui_info));
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "width"), ==, 640);
 
     g_clear_object(&ui_info);
     g_clear_object(&conn);
@@ -1718,6 +1861,37 @@ test_dbus_display_gpu_identity_merged(void)
 }
 #endif
 
+/* "connected" takes the output away and gives it back, at the size it had. */
+static void
+test_dbus_display_gpu_connected(void)
+{
+    TestGPU t = {};
+    TestGPUOutput out[GPU_OUTPUTS];
+
+    test_gpu_start(&t);
+    test_gpu_apply(&t, 0, 1600, 900);
+    test_gpu_wait_display_event(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 1600);
+    test_gpu_clear_display_event(&t);
+
+    test_uiinfo_apply_ok(t.ui_info[0], g_variant_new_parsed(
+        "{'connected': <false>}"));
+    test_gpu_wait_display_event(&t);
+    g_assert_cmpuint(test_gpu_width(&t), ==, 0);
+    test_gpu_clear_display_event(&t);
+
+    test_uiinfo_apply_ok(t.ui_info[0], g_variant_new_parsed(
+        "{'connected': <true>}"));
+    test_gpu_wait_display_event(&t);
+    test_gpu_display_info(&t, out);
+    g_assert_cmpuint(out[0].width, ==, 1600);
+    g_assert_cmpuint(out[0].height, ==, 900);
+    test_gpu_clear_display_event(&t);
+    test_gpu_assert_quiet(&t);
+
+    test_gpu_stop(&t);
+}
+
 static gsize
 get_console_ids_count(GDBusConnection *conn)
 {
@@ -1826,6 +2000,8 @@ main(int argc, char **argv)
                        test_dbus_display_uiinfo_legacy);
         qtest_add_func("/dbus-display/uiinfo/identity",
                        test_dbus_display_uiinfo_identity);
+        qtest_add_func("/dbus-display/uiinfo/connected",
+                       test_dbus_display_uiinfo_connected);
         qtest_add_func("/dbus-display/gpu/no-size",
                        test_dbus_display_gpu_no_size);
         qtest_add_func("/dbus-display/gpu/first-off",
@@ -1881,6 +2057,8 @@ main(int argc, char **argv)
         qtest_add_data_func("/dbus-display/gpu/identity/swap/vendor",
                             &test_monitor_vendor,
                             test_dbus_display_gpu_identity_swap);
+        qtest_add_func("/dbus-display/gpu/connected",
+                       test_dbus_display_gpu_connected);
     }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);
