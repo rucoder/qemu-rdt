@@ -225,6 +225,14 @@ virtio_gpu_base_device_realize(DeviceState *qdev,
         }
     }
 
+    for (i = 0; i < g->conf.max_outputs; i++) {
+        if ((g->enabled_output_bitmask & (1 << i)) &&
+            (!g->req_state[i].width || !g->req_state[i].height)) {
+            error_setg(errp, "output %d has a zero xres or yres", i);
+            return false;
+        }
+    }
+
     if (virtio_gpu_virgl_enabled(g->conf)) {
         error_setg(&g->migration_blocker, "virgl is not yet migratable");
         if (migrate_add_blocker(&g->migration_blocker, errp) < 0) {
