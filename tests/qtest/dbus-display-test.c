@@ -7,6 +7,7 @@
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 #include "libqtest.h"
+#include "qemu/bswap.h"
 #include "qobject/qdict.h"
 #include "qobject/qstring.h"
 #include "ui/dbus-display1.h"
@@ -570,6 +571,127 @@ test_dbus_display_uiinfo_initial(void)
     qtest_quit(qts);
 }
 
+#if defined(CONFIG_VNC) && !defined(WIN32)
+/* UIInfo.Apply: NULL, or the name of the D-Bus error it failed with. */
+static char *
+test_uiinfo_apply(QemuDBusDisplay1UIInfo *ui_info, GVariant *dict)
+{
+    g_autoptr(GError) err = NULL;
+
+    qemu_dbus_display1_uiinfo_call_apply_sync(ui_info, dict,
+                                              G_DBUS_CALL_FLAGS_NONE, -1,
+                                              NULL, &err);
+    return err ? g_dbus_error_get_remote_error(err) : NULL;
+}
+
+static void
+test_uiinfo_apply_ok(QemuDBusDisplay1UIInfo *ui_info, GVariant *dict)
+{
+    g_autofree char *error = test_uiinfo_apply(ui_info, dict);
+
+    g_assert_cmpstr(error, ==, NULL);
+}
+
+static void
+test_vnc_read(int fd, void *buf, size_t len)
+{
+    while (len) {
+        ssize_t n = read(fd, buf, len);
+
+        g_assert_cmpint(n, >, 0);
+        buf = (char *)buf + n;
+        len -= n;
+    }
+}
+
+static void
+test_vnc_write(int fd, const void *buf, size_t len)
+{
+    g_assert_cmpint(qemu_write_full(fd, buf, len), ==, len);
+}
+
+/* A VNC client of @qts, past the handshake, without authentication. */
+static int
+test_vnc_connect(QTestState *qts)
+{
+    char version[12];
+    uint8_t types[256], n, shared = 1, server_init[24];
+    uint32_t result;
+    g_autofree char *name = NULL;
+    int pair[2];
+
+    g_assert_cmpint(qemu_socketpair(AF_UNIX, SOCK_STREAM, 0, pair), ==, 0);
+    g_assert_cmpint(setsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO,
+                               &(struct timeval) { .tv_sec = 10 },
+                               sizeof(struct timeval)), ==, 0);
+    qtest_qmp_add_client(qts, "vnc", pair[1]);
+    close(pair[1]);
+
+    test_vnc_read(pair[0], version, sizeof(version));
+    g_assert_cmpmem(version, sizeof(version), "RFB 003.008\n", 12);
+    test_vnc_write(pair[0], version, sizeof(version));
+    test_vnc_read(pair[0], &n, 1);
+    test_vnc_read(pair[0], types, n);
+    g_assert_nonnull(memchr(types, 1, n));          /* None */
+    test_vnc_write(pair[0], (uint8_t[]){ 1 }, 1);
+    test_vnc_read(pair[0], &result, sizeof(result));
+    g_assert_cmpuint(result, ==, 0);
+    test_vnc_write(pair[0], &shared, 1);
+    test_vnc_read(pair[0], server_init, sizeof(server_init));
+    name = g_malloc(ldl_be_p(server_init + 20));
+    test_vnc_read(pair[0], name, ldl_be_p(server_init + 20));
+    return pair[0];
+}
+
+/* SetDesktopSize: one screen of @width x @height. */
+static void
+test_vnc_set_desktop_size(int fd, uint16_t width, uint16_t height)
+{
+    uint8_t msg[24] = { 251 };
+
+    stw_be_p(msg + 2, width);
+    stw_be_p(msg + 4, height);
+    msg[6] = 1;                     /* one screen, at 0,0 */
+    stw_be_p(msg + 8 + 8, width);
+    stw_be_p(msg + 8 + 10, height);
+    test_vnc_write(fd, msg, sizeof(msg));
+}
+
+/*
+ * A VNC client that resizes the console changes the size, and leaves what
+ * the D-Bus client gave as it was.
+ */
+static void
+test_dbus_display_uiinfo_vnc(void)
+{
+    g_autoptr(GDBusConnection) conn = NULL;
+    QemuDBusDisplay1UIInfo *ui_info;
+    QTestState *qts = NULL;
+    gint64 end;
+    int fd;
+
+    test_setup_args(&qts, &conn, "-vga none -device virtio-gpu-pci -vnc none"
+                    " -display dbus,p2p=yes -name dbus-test");
+    ui_info = test_uiinfo_proxy(conn, 0);
+    test_uiinfo_apply_ok(ui_info, g_variant_new_parsed(
+        "{'refresh_rate': <uint32 60000>}"));
+
+    fd = test_vnc_connect(qts);
+    test_vnc_set_desktop_size(fd, 1600, 900);
+    end = g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND;
+    while (test_uiinfo_get_u(ui_info, "width") != 1600) {
+        g_assert_cmpint(g_get_monotonic_time(), <, end);
+        g_usleep(1000);
+    }
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "height"), ==, 900);
+    g_assert_cmpuint(test_uiinfo_get_u(ui_info, "refresh_rate"), ==, 60000);
+
+    close(fd);
+    g_clear_object(&ui_info);
+    g_clear_object(&conn);
+    qtest_quit(qts);
+}
+#endif
 
 static gsize
 get_console_ids_count(GDBusConnection *conn)
@@ -671,6 +793,10 @@ main(int argc, char **argv)
     if (qtest_has_device("virtio-gpu-pci")) {
         qtest_add_func("/dbus-display/uiinfo/initial",
                        test_dbus_display_uiinfo_initial);
+#if defined(CONFIG_VNC) && !defined(WIN32)
+        qtest_add_func("/dbus-display/uiinfo/vnc",
+                       test_dbus_display_uiinfo_vnc);
+#endif
     }
     if (qtest_has_machine("q35") && qtest_has_device("bochs-display")) {
         qtest_add_func("/dbus-display/hotplug", test_dbus_display_hotplug);

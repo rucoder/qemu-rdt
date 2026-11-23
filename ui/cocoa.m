@@ -525,10 +525,14 @@ static CGEventRef handleTapEvent(CGEventTapProxy proxy, CGEventType type, CGEven
 {
     /* Must be called with the BQL, i.e. via updateUIInfo */
     NSSize frameSize;
-    QemuUIInfo info;
+    QemuUIInfo info = {};
 
     if (!qemu_console_is_graphic(dcl.con)) {
         return;
+    }
+    if (qemu_console_ui_info_supported(dcl.con)) {
+        /* What this UI does not set stays as it was asked for. */
+        info = *qemu_console_get_ui_info(dcl.con);
     }
 
     if ([self window]) {

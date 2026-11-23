@@ -285,6 +285,8 @@ void qemu_console_unregister_listener(DisplayChangeListener *dcl);
 bool qemu_console_ui_info_supported(const QemuConsole *con);
 const QemuUIInfo *qemu_console_get_ui_info(const QemuConsole *con);
 int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay);
+int qemu_console_set_ui_size(QemuConsole *con, uint32_t width,
+                             uint32_t height, bool delay);
 void qemu_console_init_ui_info(QemuConsole *con, const QemuUIInfo *info);
 
 void qemu_console_update(QemuConsole *con, int x, int y, int w, int h);

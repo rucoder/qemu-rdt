@@ -758,16 +758,7 @@ static void gd_set_ui_refresh_rate(VirtualConsole *vc, int refresh_rate)
 
 static void gd_set_ui_size(VirtualConsole *vc, gint width, gint height)
 {
-    QemuUIInfo info;
-
-    if (!qemu_console_ui_info_supported(vc->gfx.dcl.con)) {
-        return;
-    }
-
-    info = *qemu_console_get_ui_info(vc->gfx.dcl.con);
-    info.width = width;
-    info.height = height;
-    qemu_console_set_ui_info(vc->gfx.dcl.con, &info, true);
+    qemu_console_set_ui_size(vc->gfx.dcl.con, width, height, true);
 }
 
 #if defined(CONFIG_OPENGL)

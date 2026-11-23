@@ -601,13 +601,8 @@ static void handle_windowevent(SDL_Event *ev)
 
     switch (ev->window.event) {
     case SDL_WINDOWEVENT_RESIZED:
-        {
-            QemuUIInfo info = {
-                .width = ev->window.data1,
-                .height = ev->window.data2,
-            };
-            qemu_console_set_ui_info(scon->dcl.con, &info, true);
-        }
+        qemu_console_set_ui_size(scon->dcl.con, ev->window.data1,
+                                 ev->window.data2, true);
         sdl2_redraw(scon);
         break;
     case SDL_WINDOWEVENT_EXPOSED:

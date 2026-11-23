@@ -740,6 +740,25 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
 }
 
 /*
+ * For a UI that knows only the size it shows the console at: the rest of
+ * the UI info stays as it is.
+ */
+int qemu_console_set_ui_size(QemuConsole *con, uint32_t width,
+                             uint32_t height, bool delay)
+{
+    QemuUIInfo info;
+
+    if (!qemu_console_ui_info_supported(con)) {
+        return -1;
+    }
+
+    info = con->ui_info;
+    info.width = width;
+    info.height = height;
+    return qemu_console_set_ui_info(con, &info, delay);
+}
+
+/*
  * For the device, when it creates the console: the state its output starts
  * in. qemu_console_set_ui_info() compares requests with it, and UIs that
  * change one field start from it. The device is not notified.
