@@ -567,6 +567,7 @@ static CGEventRef handleTapEvent(CGEventTapProxy proxy, CGEventType type, CGEven
     info.yoff = 0;
     info.width = frameSize.width * [[self window] backingScaleFactor];
     info.height = frameSize.height * [[self window] backingScaleFactor];
+    info.connected = info.width && info.height;
 
     qemu_console_set_ui_info(dcl.con, &info, TRUE);
 }

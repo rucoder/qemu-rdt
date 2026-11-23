@@ -807,11 +807,11 @@ void gd_update_monitor_refresh_rate(VirtualConsole *vc, GtkWidget *widget)
         GdkDisplay *dpy = gtk_widget_get_display(widget);
         GdkMonitor *monitor = gdk_display_get_monitor_at_window(dpy, win);
         refresh_rate = gdk_monitor_get_refresh_rate(monitor); /* [mHz] */
+        gd_set_ui_refresh_rate(vc, refresh_rate);
     } else {
+        /* Not on a monitor (a tab not shown): nothing to tell the device. */
         refresh_rate = 0;
     }
-
-    gd_set_ui_refresh_rate(vc, refresh_rate);
 
     /* T = 1 / f = 1 [s*Hz] / f = 1000*1000 [ms*mHz] / f */
     vc->gfx.dcl.update_interval = refresh_rate ?

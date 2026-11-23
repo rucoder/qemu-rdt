@@ -117,7 +117,7 @@ static void vfio_display_edid_ui_info(void *opaque, uint32_t idx,
         return;
     }
 
-    if (info->width && info->height) {
+    if (info->connected) {
         vfio_display_edid_update(vdev, true, info->width, info->height);
     } else {
         vfio_display_edid_update(vdev, false, 0, 0);
@@ -182,6 +182,7 @@ static bool vfio_display_edid_init(VFIOPCIDevice *vdev, Error **errp)
         qemu_console_init_ui_info(dpy->con, &(QemuUIInfo) {
             .width = vdev->display_xres,
             .height = vdev->display_yres,
+            .connected = true,
         });
     }
     return true;

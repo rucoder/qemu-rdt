@@ -715,7 +715,8 @@ static bool qemu_ui_info_equal(const QemuUIInfo *a, const QemuUIInfo *b)
            a->yoff == b->yoff &&
            a->width == b->width &&
            a->height == b->height &&
-           a->refresh_rate == b->refresh_rate;
+           a->refresh_rate == b->refresh_rate &&
+           a->connected == b->connected;
 }
 
 int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
@@ -723,6 +724,7 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
     if (!qemu_console_ui_info_supported(con)) {
         return -1;
     }
+    assert(!info->connected || (info->width && info->height));
     if (qemu_ui_info_equal(&con->ui_info, info)) {
         /* nothing changed -- ignore */
         return 0;
@@ -740,8 +742,8 @@ int qemu_console_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
 }
 
 /*
- * For a UI that knows only the size it shows the console at: the rest of
- * the UI info stays as it is.
+ * For a UI that knows only the size it shows the console at, zero for no
+ * monitor: the rest of the UI info stays as it is.
  */
 int qemu_console_set_ui_size(QemuConsole *con, uint32_t width,
                              uint32_t height, bool delay)
@@ -755,6 +757,7 @@ int qemu_console_set_ui_size(QemuConsole *con, uint32_t width,
     info = con->ui_info;
     info.width = width;
     info.height = height;
+    info.connected = width && height;
     return qemu_console_set_ui_info(con, &info, delay);
 }
 
@@ -765,6 +768,7 @@ int qemu_console_set_ui_size(QemuConsole *con, uint32_t width,
  */
 void qemu_console_init_ui_info(QemuConsole *con, const QemuUIInfo *info)
 {
+    assert(!info->connected || (info->width && info->height));
     con->ui_info = *info;
 }
 
